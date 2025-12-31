@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>管理员登录</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", sans-serif;
+        background: #f5f1ea;
+        color: #1b1b1d;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .page {
+        width: min(520px, 92vw);
+        padding: 40px 20px;
+      }
+
+      .header {
+        margin-bottom: 20px;
+      }
+
+      .brand {
+        font-size: 28px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      .subtitle {
+        color: #5b5b66;
+        font-size: 14px;
+      }
+
+      .card {
+        background: #ffffff;
+        border-radius: 18px;
+        padding: 24px;
+        box-shadow: 0 18px 40px rgba(27, 27, 29, 0.12);
+      }
+
+      h2 {
+        margin: 0 0 16px;
+        font-size: 20px;
+      }
+
+      label {
+        display: block;
+        font-size: 14px;
+        margin-bottom: 8px;
+        color: #5b5b66;
+      }
+
+      .field {
+        margin-bottom: 16px;
+      }
+
+      input {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(20, 20, 20, 0.08);
+        padding: 12px 14px;
+        font-size: 14px;
+      }
+
+      button {
+        width: 100%;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 16px;
+        font-weight: 600;
+        cursor: pointer;
+        background: #0a7b5a;
+        color: #fff;
+      }
+
+      .hint {
+        font-size: 12px;
+        color: #5b5b66;
+        margin-top: 10px;
+      }
+
+      .toast-container {
+        position: fixed;
+        top: 24px;
+        right: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        z-index: 9999;
+        pointer-events: none;
+      }
+
+      .toast {
+        min-width: 220px;
+        max-width: 320px;
+        background: rgba(20, 20, 20, 0.92);
+        color: #fff;
+        padding: 12px 14px;
+        border-radius: 12px;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.2);
+        opacity: 0;
+        transform: translateY(-6px);
+        transition: opacity 0.2s ease, transform 0.2s ease;
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .toast.error {
+        background: #c1423b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">Twilio 管理后台</div>
+        <div class="subtitle">请输入管理员账号和密码以继续</div>
+      </header>
+
+      <section class="card">
+        <h2>登录</h2>
+        <form id="login-form">
+          <div class="field">
+            <label>用户名</label>
+            <input id="login-username" type="text" placeholder="请输入用户名" />
+          </div>
+          <div class="field">
+            <label>密码</label>
+            <input id="login-password" type="password" placeholder="请输入密码" />
+          </div>
+          <button type="submit">登录</button>
+          <div class="hint">提示：账号密码来自环境变量 ADMIN_USERNAME / ADMIN_PASSWORD</div>
+        </form>
+      </section>
+    </div>
+    <div id="toast-container" class="toast-container"></div>
+    <script>
+      const loginForm = document.getElementById("login-form");
+      const usernameEl = document.getElementById("login-username");
+      const passwordEl = document.getElementById("login-password");
+      const toastContainer = document.getElementById("toast-container");
+
+      function showToast(message, type = "info") {
+        if (!toastContainer) {
+          return;
+        }
+        const toast = document.createElement("div");
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        toastContainer.appendChild(toast);
+        requestAnimationFrame(() => {
+          toast.classList.add("show");
+        });
+        setTimeout(() => {
+          toast.classList.remove("show");
+          setTimeout(() => toast.remove(), 220);
+        }, 2600);
+      }
+
+      loginForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const username = usernameEl.value.trim();
+        const password = passwordEl.value.trim();
+        if (!username || !password) {
+          showToast("请输入用户名和密码", "error");
+          return;
+        }
+        try {
+          const response = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || "登录失败");
+          }
+          window.location.href = "/keys";
+        } catch (error) {
+          showToast(error.message || "登录失败", "error");
+        }
+      });
+    </script>
+  </body>
+</html>

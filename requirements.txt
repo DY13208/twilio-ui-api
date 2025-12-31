@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+sqlalchemy
+pymysql
+twilio
+sendgrid
+python-dotenv
+python-multipart
+pydantic[email]

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API 文档</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">API 文档</div>
+        <div class="subtitle">接口说明、参数与注意事项。</div>
+        <div class="header-links">
+          <a href="/" class="link">返回控制台</a>
+          <a href="/keys" class="link">Key 管理</a>
+          <a href="/logout" class="link">退出</a>
+        </div>
+      </header>
+
+      <section class="card docs">
+        <h2>通用说明</h2>
+        <p>基础地址：<code>http://localhost:8000</code></p>
+        <ul>
+          <li>请求体使用 JSON，需设置 <code>Content-Type: application/json</code>。</li>
+          <li>本服务不含鉴权，建议仅在内网或受控环境使用。</li>
+          <li>发件人白名单默认包含环境变量中的配置：</li>
+          <li><code>SENDGRID_FROM_EMAIL</code> 与 <code>TWILIO_WHATSAPP_FROM</code> 受保护不可删除。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+      <section class="card docs">
+        <h2>认证与 Key</h2>
+        <p><code>POST /api/login</code> 管理员登录，成功后写入 Cookie。</p>
+        <pre>{
+  "username": "admin",
+  "password": "your-password"
+}</pre>
+        <p><code>POST /api/logout</code> 退出登录。</p>
+        <p><code>GET /api/keys</code> 获取 Key 列表（需管理员登录）。</p>
+        <p><code>POST /api/keys</code> 生成新 Key（需管理员登录）。</p>
+        <pre>{
+  "name": "Marketing Team",
+  "scope": "send",
+  "expires_in_days": 30
+}</pre>
+        <p><code>POST /api/keys/{key_id}/revoke</code> 撤销 Key（需管理员登录）。</p>
+        <p><code>GET /api/admin/users</code> 获取管理员用户列表（需管理员登录）。</p>
+        <p><code>POST /api/admin/users</code> 新增/重置管理员用户密码（需管理员登录）。</p>
+        <pre>{
+  "username": "ops",
+  "password": "strong-pass"
+}</pre>
+        <p><code>POST /api/admin/users/{user_id}/disable</code> 禁用管理员用户（需管理员登录）。</p>
+        <p><code>POST /api/admin/users/{user_id}/enable</code> 启用管理员用户（需管理员登录）。</p>
+        <ul>
+          <li>所有 API Key 在调用 <code>/api</code> 接口时通过 <code>X-API-Key</code> 或 <code>Authorization: Bearer</code> 传递。</li>
+          <li>新建 Key 可设置 <code>scope</code>（read/send/manage）与 <code>expires_in_days</code>。</li>
+        </ul>
+      </section>
+        <h2>Email 发件人白名单</h2>
+        <p><code>GET /api/email/senders</code> 获取白名单列表。</p>
+        <p><code>POST /api/email/senders</code> 添加白名单。</p>
+        <pre>{
+  "from_email": "sender@example.com"
+}</pre>
+        <p><code>DELETE /api/email/senders</code> 删除白名单（请求体同上）。</p>
+        <ul>
+          <li>发件人必须是 SendGrid 已验证的邮箱。</li>
+          <li>删除默认发件人会返回 <code>status=protected</code>。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>发送 Email</h2>
+        <p><code>POST /api/send/email</code> 发送邮件群发。</p>
+        <pre>{
+  "recipients": ["a@example.com"],
+  "subject": "Hello",
+  "text": "Hi",
+  "from_email": "sender@example.com"
+}</pre>
+        <ul>
+          <li><code>text</code> 或 <code>html</code> 至少提供一个。</li>
+          <li><code>from_email</code> 必须在白名单内。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>WhatsApp 发送人白名单</h2>
+        <p><code>GET /api/whatsapp/senders</code> 获取白名单列表。</p>
+        <p><code>POST /api/whatsapp/senders</code> 添加白名单。</p>
+        <pre>{
+  "from_address": "whatsapp:+14155238886"
+}</pre>
+        <p><code>DELETE /api/whatsapp/senders</code> 删除白名单（请求体同上）。</p>
+        <ul>
+          <li>发送人必须是 Twilio 已批准的 WhatsApp 号码。</li>
+          <li>删除默认发送人会返回 <code>status=protected</code>。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>发送 WhatsApp（文本）</h2>
+        <p><code>POST /api/send/whatsapp</code> 发送文本消息。</p>
+        <pre>{
+  "recipients": ["+8613712345678"],
+  "body": "Hello from Twilio",
+  "from_address": "whatsapp:+14155238886",
+  "media_urls": ["https://example.com/image.png"]
+}</pre>
+        <ul>
+          <li>文本模式需要 <code>body</code>。</li>
+          <li><code>media_urls</code> 为可选，多个链接按数组传入。</li>
+          <li><code>use_proxy</code> 设为 <code>false</code> 可禁用本地代理。</li>
+          <li>窗口期外发送文本可能被 Twilio 拒绝，建议使用模板。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>获取 WhatsApp 模板列表</h2>
+        <p><code>GET /api/whatsapp/templates</code> 获取模板列表（来自 Twilio Content API）。</p>
+        <ul>
+          <li>需要正确配置 Twilio 账号与 Token。</li>
+          <li>默认返回最多 50 条，可通过 <code>limit</code> 参数调整。</li>
+          <li>支持 <code>search</code> 过滤模板名称或 SID。</li>
+          <li><code>use_proxy</code> 设为 <code>false</code> 可禁用本地代理。</li>
+          <li>分页使用 <code>page_token</code>，响应中包含 <code>next_page_token</code> 与
+            <code>previous_page_token</code>。</li>
+          <li>返回字段包含 <code>sid</code>、<code>friendly_name</code>、<code>language</code>、
+            <code>status</code>、<code>variables</code>、<code>whatsapp_eligibility</code>。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>发送 WhatsApp（模板）</h2>
+        <p><code>POST /api/send/whatsapp</code> 发送模板消息。</p>
+        <pre>{
+  "recipients": ["+8613712345678"],
+  "content_sid": "HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "content_variables": { "1": "Alice", "2": "订单123" },
+  "from_address": "whatsapp:+14155238886"
+}</pre>
+        <ul>
+          <li>模板必须在 Twilio 中完成审批。</li>
+          <li><code>content_variables</code> 为 JSON 对象，可选。</li>
+          <li>模板模式不需要 <code>body</code>。</li>
+          <li><code>use_proxy</code> 设为 <code>false</code> 可禁用本地代理。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>状态查询</h2>
+        <p><code>GET /api/status/{message_id}</code> 查询单条消息。</p>
+        <p><code>GET /api/status/twilio/{message_sid}</code> 查询 Twilio 消息状态。</p>
+        <p>必要时可传 <code>use_proxy=false</code> 禁用本地代理。</p>
+        <p><code>GET /api/batch/{batch_id}</code> 查询批次消息。</p>
+      </section>
+
+      <section class="card docs">
+        <h2>Webhooks</h2>
+        <p><code>POST /webhooks/twilio/whatsapp</code> 接收 Twilio 状态回调。</p>
+        <p><code>POST /webhooks/sendgrid</code> 接收 SendGrid 事件。</p>
+        <ul>
+          <li>配置对外地址时需设置 <code>PUBLIC_BASE_URL</code>。</li>
+          <li>可启用签名校验：<code>TWILIO_VALIDATE_WEBHOOK_SIGNATURE</code> 与
+            <code>SENDGRID_EVENT_WEBHOOK_VERIFY</code>。</li>
+        </ul>
+      </section>
+    </div>
+  </body>
+</html>

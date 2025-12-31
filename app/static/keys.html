@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API Key 管理</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">API Key 管理</div>
+        <div class="subtitle">创建、撤销并设置当前 API Key。</div>
+        <div class="header-links">
+          <a href="/" class="link">返回控制台</a>
+          <a href="/api-docs" class="link">API 文档</a>
+          <a href="/logout" class="link">退出</a>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card">
+          <h2>当前 API Key</h2>
+          <div class="field">
+            <label>Key</label>
+            <div class="row">
+              <input
+                id="current-api-key"
+                type="text"
+                placeholder="粘贴 API Key"
+              />
+              <button id="current-api-key-save" type="button" class="secondary small">
+                保存
+              </button>
+              <button id="current-api-key-clear" type="button" class="ghost small">
+                清除
+              </button>
+            </div>
+            <div class="hint">保存在浏览器本地，用于调用 API。</div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>生成新 Key</h2>
+          <div class="field">
+            <label>名称（可选）</label>
+            <input id="new-key-name" type="text" placeholder="例如 Marketing Team" />
+          </div>
+          <div class="row">
+            <div class="field" style="flex: 1; min-width: 180px;">
+              <label>权限范围</label>
+              <select id="new-key-scope">
+                <option value="manage">管理（全部）</option>
+                <option value="send">发送</option>
+                <option value="read">只读</option>
+              </select>
+            </div>
+            <div class="field" style="flex: 1; min-width: 180px;">
+              <label>有效期（天）</label>
+              <input
+                id="new-key-expire"
+                type="number"
+                min="1"
+                placeholder="留空为永久"
+              />
+            </div>
+          </div>
+          <button id="new-key-create" type="button" class="primary">
+            生成 Key
+          </button>
+          <div class="result">
+            <pre id="new-key-result">生成后的 Key 仅显示一次。</pre>
+          </div>
+          <div class="row">
+            <button id="new-key-copy" type="button" class="secondary small">
+              复制 Key
+            </button>
+            <button id="new-key-use" type="button" class="ghost small">
+              设为当前
+            </button>
+          </div>
+        </section>
+
+        <section class="card wide">
+          <h2>已有 Keys</h2>
+          <div class="stack" id="keys-list"></div>
+        </section>
+
+        <section class="card wide">
+          <h2>管理员用户</h2>
+          <div class="field">
+            <label>新增/重置密码</label>
+            <div class="row">
+              <input
+                id="admin-user-username"
+                type="text"
+                placeholder="用户名"
+              />
+              <input
+                id="admin-user-password"
+                type="password"
+                placeholder="密码"
+              />
+              <button id="admin-user-save" type="button" class="secondary small">
+                保存
+              </button>
+            </div>
+            <div class="hint">同名用户会更新密码并重新启用。</div>
+          </div>
+          <div class="stack" id="admin-users-list"></div>
+        </section>
+      </main>
+    </div>
+    <div id="toast-container" class="toast-container"></div>
+    <script src="/static/keys.js"></script>
+  </body>
+</html>
