@@ -17,13 +17,13 @@ pip install -r requirements.txt
 If you have a JDBC URL like:
 
 ```
-jdbc:mysql://120.76.200.85:3306/marketing?serverTimezone=GMT%2B8&useSSL=FALSE
+jdbc:mysql://127.0.0.1:3306/marketing?serverTimezone=GMT%2B8&useSSL=FALSE
 ```
 
 Use this SQLAlchemy format:
 
 ```
-mysql+pymysql://dify:YOUR_PASSWORD@120.76.200.85:3306/marketing?charset=utf8mb4
+mysql+pymysql://dify:YOUR_PASSWORD@127.0.0.1:3306/marketing?charset=utf8mb4
 ```
 
 Make sure to set admin credentials so you can log in:
