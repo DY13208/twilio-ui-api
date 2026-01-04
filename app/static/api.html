@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>API 文档</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="static/styles.css" />
   </head>
   <body>
     <div class="page">
@@ -12,15 +12,15 @@
         <div class="brand">API 文档</div>
         <div class="subtitle">接口说明、参数与注意事项。</div>
         <div class="header-links">
-          <a href="/" class="link">返回控制台</a>
-          <a href="/keys" class="link">Key 管理</a>
-          <a href="/logout" class="link">退出</a>
+          <a href="./" class="link">返回控制台</a>
+          <a href="keys" class="link">Key 管理</a>
+          <a href="logout" class="link">退出</a>
         </div>
       </header>
 
       <section class="card docs">
         <h2>通用说明</h2>
-        <p>基础地址：<code>http://localhost:8000</code></p>
+        <p>基础地址：<code>http://localhost:8991</code></p>
         <ul>
           <li>请求体使用 JSON，需设置 <code>Content-Type: application/json</code>。</li>
           <li>本服务不含鉴权，建议仅在内网或受控环境使用。</li>

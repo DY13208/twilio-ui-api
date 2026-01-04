@@ -29,7 +29,7 @@ loginForm.addEventListener("submit", async (event) => {
     return;
   }
   try {
-    const response = await fetch("/api/login", {
+    const response = await fetch("api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -38,7 +38,7 @@ loginForm.addEventListener("submit", async (event) => {
     if (!response.ok) {
       throw new Error(data.detail || "登录失败。");
     }
-    window.location.href = "/keys";
+    window.location.href = "keys";
   } catch (error) {
     showToast(error.message || "登录失败。", "error");
   }

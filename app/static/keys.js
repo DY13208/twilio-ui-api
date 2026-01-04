@@ -170,7 +170,7 @@ function renderKeys(items) {
 
 async function loadKeys() {
   try {
-    const response = await apiFetch("/api/keys");
+    const response = await apiFetch("api/keys");
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.detail || "加载失败。");
@@ -195,7 +195,7 @@ async function createKey() {
     expiresInDays = parsed;
   }
   try {
-    const response = await apiFetch("/api/keys", {
+    const response = await apiFetch("api/keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -226,7 +226,7 @@ async function createKey() {
 
 async function revokeKey(keyId) {
   try {
-    const response = await apiFetch(`/api/keys/${keyId}/revoke`, {
+    const response = await apiFetch(`api/keys/${keyId}/revoke`, {
       method: "POST",
     });
     const data = await response.json();
@@ -300,7 +300,7 @@ function renderAdminUsers(items) {
 
 async function loadAdminUsers() {
   try {
-    const response = await apiFetch("/api/admin/users");
+    const response = await apiFetch("api/admin/users");
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.detail || "加载失败。");
@@ -319,7 +319,7 @@ async function saveAdminUser() {
     return;
   }
   try {
-    const response = await apiFetch("/api/admin/users", {
+    const response = await apiFetch("api/admin/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -339,7 +339,7 @@ async function saveAdminUser() {
 
 async function disableAdminUser(userId) {
   try {
-    const response = await apiFetch(`/api/admin/users/${userId}/disable`, {
+    const response = await apiFetch(`api/admin/users/${userId}/disable`, {
       method: "POST",
     });
     const data = await response.json();
@@ -355,7 +355,7 @@ async function disableAdminUser(userId) {
 
 async function enableAdminUser(userId) {
   try {
-    const response = await apiFetch(`/api/admin/users/${userId}/enable`, {
+    const response = await apiFetch(`api/admin/users/${userId}/enable`, {
       method: "POST",
     });
     const data = await response.json();

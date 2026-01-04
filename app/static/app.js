@@ -164,7 +164,7 @@ async function loadEmailSenders(options = {}) {
   }
   emailSendersLoading = true;
   try {
-    const response = await apiFetch("/api/email/senders");
+    const response = await apiFetch("api/email/senders");
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.detail || "加载发件人失败。");
@@ -209,7 +209,7 @@ async function loadWhatsappSenders(options = {}) {
   }
   whatsappSendersLoading = true;
   try {
-    const response = await apiFetch("/api/whatsapp/senders");
+    const response = await apiFetch("api/whatsapp/senders");
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.detail || "加载发送人失败。");
@@ -356,7 +356,7 @@ async function loadWhatsappTemplates(options = {}) {
         params.set("search", search);
       }
       params.set("use_proxy", useProxy ? "true" : "false");
-      const response = await apiFetch(`/api/whatsapp/templates?${params.toString()}`);
+      const response = await apiFetch(`api/whatsapp/templates?${params.toString()}`);
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.detail || "加载模板失败。");
@@ -517,7 +517,7 @@ emailFromAddBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    const response = await apiFetch("/api/email/senders", {
+    const response = await apiFetch("api/email/senders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from_email: rawValue }),
@@ -544,7 +544,7 @@ emailFromDeleteBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    const response = await apiFetch("/api/email/senders", {
+    const response = await apiFetch("api/email/senders", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from_email: selected }),
@@ -580,7 +580,7 @@ whatsappFromAddBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    const response = await apiFetch("/api/whatsapp/senders", {
+    const response = await apiFetch("api/whatsapp/senders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from_address: rawValue }),
@@ -607,7 +607,7 @@ whatsappFromDeleteBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    const response = await apiFetch("/api/whatsapp/senders", {
+    const response = await apiFetch("api/whatsapp/senders", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from_address: selected }),
@@ -647,7 +647,7 @@ sendForm.addEventListener("submit", async (event) => {
   }
 
   const payload = { recipients };
-  let endpoint = "/api/send/email";
+  let endpoint = "api/send/email";
 
   if (channel === "email") {
     payload.subject = subjectEl.value.trim();
@@ -664,7 +664,7 @@ sendForm.addEventListener("submit", async (event) => {
       return;
     }
   } else {
-    endpoint = "/api/send/whatsapp";
+    endpoint = "api/send/whatsapp";
     const mode = getWhatsappMode();
     payload.use_proxy = shouldUseProxy();
     const fromAddress = whatsappFromSelect.value.trim();
@@ -728,7 +728,7 @@ statusMessageBtn.addEventListener("click", async () => {
   }
   setStatusResult({ status: "加载中..." });
   try {
-    const response = await apiFetch(`/api/status/${encodeURIComponent(messageId)}`);
+    const response = await apiFetch(`api/status/${encodeURIComponent(messageId)}`);
     const data = await response.json();
     setStatusResult(data);
   } catch (error) {
@@ -749,7 +749,7 @@ if (statusTwilioBtn && statusTwilioIdEl) {
         use_proxy: shouldUseProxy() ? "true" : "false",
       });
       const response = await apiFetch(
-        `/api/status/twilio/${encodeURIComponent(messageSid)}?${params.toString()}`
+        `api/status/twilio/${encodeURIComponent(messageSid)}?${params.toString()}`
       );
       const data = await response.json();
       if (!response.ok) {
@@ -770,7 +770,7 @@ statusBatchBtn.addEventListener("click", async () => {
   }
   setStatusResult({ status: "加载中..." });
   try {
-    const response = await apiFetch(`/api/batch/${encodeURIComponent(batchId)}`);
+    const response = await apiFetch(`api/batch/${encodeURIComponent(batchId)}`);
     const data = await response.json();
     setStatusResult(data);
   } catch (error) {

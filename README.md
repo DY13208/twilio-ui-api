@@ -23,7 +23,7 @@ jdbc:mysql://127.0.0.1:3306/marketing?serverTimezone=GMT%2B8&useSSL=FALSE
 Use this SQLAlchemy format:
 
 ```
-mysql+pymysql://dify:YOUR_PASSWORD@127.0.0.1:3306/marketing?charset=utf8mb4
+mysql+pymysql://YOUR_DB:YOUR_PASSWORD@127.0.0.1:3306/marketing?charset=utf8mb4
 ```
 
 Make sure to set admin credentials so you can log in:
@@ -160,3 +160,90 @@ If you enable signature verification:
 
 - `TWILIO_VALIDATE_WEBHOOK_SIGNATURE=true`
 - `SENDGRID_EVENT_WEBHOOK_VERIFY=true` and set `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY`.
+
+## 服务器部署指南（Linux + Nginx + systemd）
+
+1. 安装依赖（以 Ubuntu 为例）：
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip nginx
+```
+
+2. 部署代码并准备环境变量：
+
+```bash
+git clone <your-repo> /opt/twillio
+cd /opt/twillio
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+确保 `.env` 至少包含以下关键项（Webhook/登录相关）：
+
+```
+PUBLIC_BASE_URL=https://your-domain.com
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change_me
+ADMIN_COOKIE_SECURE=true
+```
+
+3. 创建 systemd 服务（`/etc/systemd/system/twillio.service`）：
+
+```
+[Unit]
+Description=Twilio Broadcast Console
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/twillio
+ExecStart=/opt/twillio/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启用并启动服务：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now twillio
+sudo systemctl status twillio
+```
+
+4. 配置 Nginx 反向代理（`/etc/nginx/sites-available/twillio`）：
+
+```
+server {
+  listen 80;
+  server_name your-domain.com;
+
+  location / {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+}
+```
+
+启用并重载：
+
+```bash
+sudo ln -s /etc/nginx/sites-available/twillio /etc/nginx/sites-enabled/twillio
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+5. 配置 HTTPS（示例使用 certbot）：
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.com
+```
+
+完成后访问：`https://your-domain.com`，并确保 `PUBLIC_BASE_URL` 使用同一域名。

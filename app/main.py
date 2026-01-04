@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import hashlib
 import json
+import posixpath
 from pathlib import Path
 import secrets
 from typing import Any, Dict, List, Optional
@@ -63,7 +64,7 @@ class AuthStaticFiles(StaticFiles):
         finally:
             db.close()
         if not session:
-            response = RedirectResponse(url="/login")
+            response = RedirectResponse(url=_login_redirect_path(request))
             await response(scope, receive, send)
             return
         await super().__call__(scope, receive, send)
@@ -86,7 +87,7 @@ def startup() -> None:
 @app.get("/", response_class=FileResponse)
 def index(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     if not _get_admin_session(request, db):
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url=_login_redirect_path(request))
     return FileResponse(static_dir / "index.html", media_type="text/html; charset=utf-8")
 
 
@@ -98,14 +99,14 @@ def login_page() -> FileResponse:
 @app.get("/keys", response_class=FileResponse)
 def keys_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     if not _get_admin_session(request, db):
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url=_login_redirect_path(request))
     return FileResponse(static_dir / "keys.html", media_type="text/html; charset=utf-8")
 
 
 @app.get("/api-docs", response_class=FileResponse)
 def api_docs(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     if not _get_admin_session(request, db):
-        return RedirectResponse(url="/login")
+        return RedirectResponse(url=_login_redirect_path(request))
     return FileResponse(static_dir / "api.html", media_type="text/html; charset=utf-8")
 
 
@@ -131,6 +132,12 @@ def _public_url(request: Request) -> str:
         base = base.rstrip("/")
         return f"{base}{request.url.path}" + (f"?{request.url.query}" if request.url.query else "")
     return str(request.url)
+
+
+def _login_redirect_path(request: Request) -> str:
+    path = request.url.path or "/"
+    base_dir = posixpath.dirname(path) or "/"
+    return posixpath.relpath("/login", base_dir)
 
 
 def _hash_password(password: str) -> str:
@@ -417,7 +424,7 @@ def logout(
 
 @app.get("/logout")
 def logout_page(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    response = RedirectResponse(url="/login")
+    response = RedirectResponse(url=_login_redirect_path(request))
     token = request.cookies.get(ADMIN_COOKIE_NAME)
     if token:
         session = db.query(AdminSession).filter(AdminSession.token == token).first()
