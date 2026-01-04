@@ -51,6 +51,7 @@ Open `http://localhost:8000/keys` for API key management after login.
 
 All `/api/*` endpoints (except `/api/login`, `/api/logout`, and `/api/keys*`) require an API key.
 Send it via `X-API-Key: <key>` or `Authorization: Bearer <key>`.
+`POST /api/login` returns a per-admin `token`; API keys are bound to the admin user that created them.
 
 API key scopes:
 

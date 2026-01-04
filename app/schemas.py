@@ -83,6 +83,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     status: str
+    token: Optional[str] = None
 
 
 class ApiKeyCreate(BaseModel):

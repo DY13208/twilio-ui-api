@@ -4,7 +4,7 @@ import json
 import posixpath
 from pathlib import Path
 import secrets
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
@@ -234,6 +234,7 @@ def _ensure_schema() -> None:
             inspector,
             "api_keys",
             {
+                "admin_user_id": "admin_user_id INT NULL",
                 "scope": "scope VARCHAR(32) NOT NULL DEFAULT 'manage'",
                 "expires_at": "expires_at DATETIME NULL",
                 "last_used_at": "last_used_at DATETIME NULL",
@@ -244,6 +245,20 @@ def _ensure_schema() -> None:
             conn.execute(
                 text("UPDATE api_keys SET scope='manage' WHERE scope IS NULL OR scope = ''")
             )
+            if inspector.has_table("admin_users"):
+                admin_count = conn.execute(text("SELECT COUNT(*) FROM admin_users")).scalar()
+                if admin_count == 1:
+                    admin_id = conn.execute(
+                        text("SELECT id FROM admin_users ORDER BY id LIMIT 1")
+                    ).scalar()
+                    if admin_id:
+                        conn.execute(
+                            text(
+                                "UPDATE api_keys SET admin_user_id=:admin_id "
+                                "WHERE admin_user_id IS NULL"
+                            ),
+                            {"admin_id": admin_id},
+                        )
 
         _ensure_table_columns(
             conn,
@@ -268,6 +283,42 @@ def _normalize_scope(value: Optional[str]) -> str:
 
 def _hash_api_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _create_api_key_record(
+    db: Session,
+    *,
+    name: Optional[str],
+    scope: Optional[str],
+    expires_in_days: Optional[int],
+    admin_user_id: Optional[int],
+) -> Tuple[ApiKey, str]:
+    scope_value = _normalize_scope(scope)
+    expires_at = None
+    if expires_in_days is not None:
+        if expires_in_days <= 0:
+            raise HTTPException(status_code=400, detail="expires_in_days must be positive")
+        expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+    for _ in range(5):
+        raw_key = f"sk_{secrets.token_urlsafe(32)}"
+        key_hash = _hash_api_key(raw_key)
+        exists = db.query(ApiKey).filter(ApiKey.key_hash == key_hash).first()
+        if exists:
+            continue
+        record = ApiKey(
+            name=(name or "").strip() or None,
+            prefix=raw_key[:8],
+            key_hash=key_hash,
+            scope=scope_value,
+            expires_at=expires_at,
+            admin_user_id=admin_user_id,
+            created_at=datetime.utcnow(),
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record, raw_key
+    raise HTTPException(status_code=500, detail="failed to generate api key")
 
 
 def _extract_api_key(request: Request) -> Optional[str]:
@@ -324,6 +375,10 @@ def _require_api_key(
         raise HTTPException(status_code=401, detail="api_key is invalid")
     if record.expires_at and record.expires_at <= datetime.utcnow():
         raise HTTPException(status_code=401, detail="api_key is expired")
+    if record.admin_user_id is not None:
+        user = db.query(AdminUser).filter(AdminUser.id == record.admin_user_id).first()
+        if not user or user.disabled_at:
+            raise HTTPException(status_code=401, detail="api_key is invalid")
     scope_rank = {"read": 1, "send": 2, "manage": 3}
     record_scope = record.scope or "manage"
     if record_scope not in scope_rank:
@@ -405,7 +460,7 @@ def login(
     db.add(session)
     db.commit()
     _set_admin_cookie(response, token, request)
-    return LoginResponse(status="ok")
+    return LoginResponse(status="ok", token=token)
 
 
 @app.post("/api/logout", response_model=LoginResponse)
@@ -438,9 +493,14 @@ def logout_page(request: Request, db: Session = Depends(get_db)) -> RedirectResp
 @app.get("/api/keys", response_model=ApiKeyListResponse)
 def list_api_keys(
     db: Session = Depends(get_db),
-    _: AdminSession = Depends(_require_admin),
+    session: AdminSession = Depends(_require_admin),
 ) -> ApiKeyListResponse:
-    keys = db.query(ApiKey).order_by(ApiKey.created_at.desc()).all()
+    keys = (
+        db.query(ApiKey)
+        .filter(ApiKey.admin_user_id == session.admin_user_id)
+        .order_by(ApiKey.created_at.desc())
+        .all()
+    )
     items = [
         ApiKeyItem(
             id=key.id,
@@ -461,50 +521,37 @@ def list_api_keys(
 def create_api_key(
     payload: ApiKeyCreate,
     db: Session = Depends(get_db),
-    _: AdminSession = Depends(_require_admin),
+    session: AdminSession = Depends(_require_admin),
 ) -> ApiKeyCreateResponse:
-    scope = _normalize_scope(payload.scope)
-    expires_at = None
-    if payload.expires_in_days is not None:
-        if payload.expires_in_days <= 0:
-            raise HTTPException(status_code=400, detail="expires_in_days must be positive")
-        expires_at = datetime.utcnow() + timedelta(days=payload.expires_in_days)
-    for _ in range(5):
-        raw_key = f"sk_{secrets.token_urlsafe(32)}"
-        key_hash = _hash_api_key(raw_key)
-        exists = db.query(ApiKey).filter(ApiKey.key_hash == key_hash).first()
-        if exists:
-            continue
-        record = ApiKey(
-            name=(payload.name or "").strip() or None,
-            prefix=raw_key[:8],
-            key_hash=key_hash,
-            scope=scope,
-            expires_at=expires_at,
-            created_at=datetime.utcnow(),
-        )
-        db.add(record)
-        db.commit()
-        db.refresh(record)
-        return ApiKeyCreateResponse(
-            id=record.id,
-            name=record.name,
-            prefix=record.prefix,
-            scope=record.scope or "manage",
-            expires_at=record.expires_at,
-            api_key=raw_key,
-            created_at=record.created_at,
-        )
-    raise HTTPException(status_code=500, detail="failed to generate api key")
+    record, raw_key = _create_api_key_record(
+        db,
+        name=payload.name,
+        scope=payload.scope,
+        expires_in_days=payload.expires_in_days,
+        admin_user_id=session.admin_user_id,
+    )
+    return ApiKeyCreateResponse(
+        id=record.id,
+        name=record.name,
+        prefix=record.prefix,
+        scope=record.scope or "manage",
+        expires_at=record.expires_at,
+        api_key=raw_key,
+        created_at=record.created_at,
+    )
 
 
 @app.post("/api/keys/{key_id}/revoke", response_model=ApiKeyItem)
 def revoke_api_key(
     key_id: int,
     db: Session = Depends(get_db),
-    _: AdminSession = Depends(_require_admin),
+    session: AdminSession = Depends(_require_admin),
 ) -> ApiKeyItem:
-    record = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+    record = (
+        db.query(ApiKey)
+        .filter(ApiKey.id == key_id, ApiKey.admin_user_id == session.admin_user_id)
+        .first()
+    )
     if not record:
         raise HTTPException(status_code=404, detail="api key not found")
     if record.revoked_at is None:

@@ -50,6 +50,7 @@ class ApiKey(Base):
     name = Column(String(255))
     prefix = Column(String(16), index=True, nullable=False)
     key_hash = Column(String(64), unique=True, index=True, nullable=False)
+    admin_user_id = Column(Integer, index=True)
     scope = Column(String(32), nullable=False, default="manage")
     expires_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
