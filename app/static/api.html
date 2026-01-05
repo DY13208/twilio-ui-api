@@ -30,10 +30,9 @@
       </section>
 
       <section class="card docs">
-      <section class="card docs">
         <h2>认证与 Key</h2>
         <p><code>POST /api/login</code> 管理员登录，成功后写入 Cookie。</p>
-        <p>返回 <code>token</code>，用于客户端保持会话。</p>
+        <p>返回 <code>{ "status": "ok", "token": "..." }</code>（不包含 API Key）。</p>
         <pre>{
   "username": "admin",
   "password": "your-password"
@@ -60,6 +59,8 @@
           <li>新建 Key 可设置 <code>scope</code>（read/send/manage）与 <code>expires_in_days</code>。</li>
         </ul>
       </section>
+
+      <section class="card docs">
         <h2>Email 发件人白名单</h2>
         <p><code>GET /api/email/senders</code> 获取白名单列表。</p>
         <p><code>POST /api/email/senders</code> 添加白名单。</p>
@@ -152,11 +153,54 @@
       </section>
 
       <section class="card docs">
-        <h2>状态查询</h2>
-        <p><code>GET /api/status/{message_id}</code> 查询单条消息。</p>
-        <p><code>GET /api/status/twilio/{message_sid}</code> 查询 Twilio 消息状态。</p>
-        <p>必要时可传 <code>use_proxy=false</code> 禁用本地代理。</p>
-        <p><code>GET /api/batch/{batch_id}</code> 查询批次消息。</p>
+        <h2>状态与历史查询</h2>
+        <p><code>GET /api/status/{message_id}</code> 查询单条消息状态。</p>
+        <p><code>GET /api/status/twilio/{message_sid}</code> 直接从 Twilio 查询消息状态（可选参数 <code>use_proxy</code>）。</p>
+        <p><code>GET /api/batch/{batch_id}</code> 查询批次消息列表。</p>
+        <p><code>GET /api/users</code> 分页查询已发送消息的用户列表。</p>
+        <pre>GET /api/users?channel=whatsapp&amp;created_from=2025-01-01T00:00:00&amp;limit=50&amp;offset=0</pre>
+        <ul>
+          <li><code>channel</code>：可选，<code>email</code> 或 <code>whatsapp</code>。</li>
+          <li><code>created_from</code>/<code>created_to</code>：可选，ISO8601 时间范围。</li>
+          <li><code>limit</code>：可选，每页数量，默认 50。</li>
+          <li><code>offset</code>：可选，偏移量，默认 0。</li>
+          <li>返回格式：<code>{ "users": [...], "total": 100 }</code></li>
+          <li>每个用户包含：<code>user_address</code>、<code>total_messages</code>、<code>unread_count</code>、<code>last_message_at</code>、<code>channels</code>。</li>
+          <li>用户列表按最后消息时间倒序排列。</li>
+        </ul>
+        <p><code>GET /api/chat/{user_address}</code> 按用户查看聊天记录（Email + WhatsApp）。</p>
+        <pre>GET /api/chat/{user_address}?channel=whatsapp&amp;limit=50&amp;offset=0</pre>
+        <ul>
+          <li><code>user_address</code>：用户地址，例如 <code>user@example.com</code> 或 <code>whatsapp:+86137...</code>。</li>
+          <li><code>channel</code>：可选，<code>email</code> 或 <code>whatsapp</code>。</li>
+          <li><code>limit</code>：可选，每页数量，默认 100。</li>
+          <li><code>offset</code>：可选，偏移量，默认 0。</li>
+          <li>返回字段中包含 <code>read_at</code>（已读时间），该字段通常由 Twilio/SendGrid 的 webhook 自动更新。</li>
+          <li>返回格式：<code>{ "messages": [...], "total": 100, "unread_count": 5 }</code></li>
+        </ul>
+        <p><code>GET /api/messages/whatsapp</code> 分页返回已发送 WhatsApp 消息列表。</p>
+        <pre>GET /api/messages/whatsapp?status=delivered&amp;created_from=2025-01-01T00:00:00&amp;limit=50&amp;offset=0</pre>
+        <ul>
+          <li><code>status</code>：可选，<code>queued</code>/<code>accepted</code>/<code>delivered</code>/<code>read</code>/<code>failed</code>。</li>
+          <li><code>created_from</code>/<code>created_to</code>：可选，ISO8601 时间范围（例如：<code>2025-01-01T00:00:00</code>）。</li>
+          <li><code>to_address</code>：可选，只看发给某个收件人的消息（例如：<code>whatsapp:+86137...</code>）。</li>
+          <li><code>limit</code>：可选，每页数量，默认 100。</li>
+          <li><code>offset</code>：可选，偏移量，默认 0。</li>
+          <li>返回格式：<code>{ "messages": [...], "total": 100, "unread_count": 5 }</code></li>
+        </ul>
+        <p><code>POST /api/chat/mark-read</code> 手动标记消息为已读（备用功能）。</p>
+        <pre>{
+  "message_ids": [1, 2, 3]
+}</pre>
+        <ul>
+          <li><code>message_ids</code>：消息 ID 数组，至少包含一个元素。</li>
+          <li>批量标记消息为已读，仅更新 <code>read_at</code> 为 <code>null</code> 的消息。</li>
+          <li>返回格式：<code>{ "updated": 2 }</code>（实际更新的消息数量）。</li>
+          <li>注意：已读状态通常通过以下方式自动更新：</li>
+          <li>WhatsApp: Twilio webhook 在消息状态为 "read" 时自动更新。</li>
+          <li>Email: SendGrid webhook 在邮件 "open" 事件时自动更新。</li>
+          <li>此 API 主要用于手动标记，适用于 webhook 未正确触发的情况。</li>
+        </ul>
       </section>
 
       <section class="card docs">

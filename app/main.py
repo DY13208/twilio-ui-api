@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, text, func, distinct
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -25,6 +25,8 @@ from app.schemas import (
     AdminUserCreate,
     AdminUserItem,
     AdminUserListResponse,
+    ChatHistoryResponse,
+    ChatMessage,
     EmailSendRequest,
     EmailSenderCreate,
     EmailSenderItem,
@@ -32,10 +34,14 @@ from app.schemas import (
     EmailSendersResponse,
     LoginRequest,
     LoginResponse,
+    MarkReadRequest,
+    MarkReadResponse,
     MessageStatus,
     SendResponse,
     SendResult,
     TwilioMessageStatus,
+    UserListResponse,
+    UserMessageStats,
     WhatsAppSenderCreate,
     WhatsAppSenderUpsertResponse,
     WhatsAppSendersResponse,
@@ -110,6 +116,13 @@ def api_docs(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     return FileResponse(static_dir / "api.html", media_type="text/html; charset=utf-8")
 
 
+@app.get("/chat", response_class=FileResponse)
+def chat_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
+    if not _get_admin_session(request, db):
+        return RedirectResponse(url=_login_redirect_path(request))
+    return FileResponse(static_dir / "chat.html", media_type="text/html; charset=utf-8")
+
+
 def _message_to_status(message: Message) -> MessageStatus:
     return MessageStatus(
         id=message.id,
@@ -121,6 +134,25 @@ def _message_to_status(message: Message) -> MessageStatus:
         status=message.status,
         provider_message_id=message.provider_message_id,
         error=message.error,
+        read_at=message.read_at,
+        created_at=message.created_at,
+        updated_at=message.updated_at,
+    )
+
+
+def _message_to_chat(message: Message) -> ChatMessage:
+    return ChatMessage(
+        id=message.id,
+        batch_id=message.batch_id,
+        channel=message.channel,
+        to_address=message.to_address,
+        from_address=message.from_address,
+        subject=message.subject,
+        body=message.body,
+        status=message.status,
+        provider_message_id=message.provider_message_id,
+        error=message.error,
+        read_at=message.read_at,
         created_at=message.created_at,
         updated_at=message.updated_at,
     )
@@ -272,6 +304,13 @@ def _ensure_schema() -> None:
             inspector,
             "email_senders",
             {"from_name": "from_name VARCHAR(255) NULL"},
+        )
+
+        _ensure_table_columns(
+            conn,
+            inspector,
+            "broadcast_messages",
+            {"read_at": "read_at DATETIME NULL"},
         )
 
 
@@ -1259,6 +1298,9 @@ async def twilio_whatsapp_webhook(request: Request, db: Session = Depends(get_db
             message.provider_message_id = message_sid
         if status:
             message.status = status
+            # 当Twilio报告消息状态为"read"时，自动更新read_at字段
+            if status.lower() == "read" and message.read_at is None:
+                message.read_at = datetime.utcnow()
         if error_code or error_message:
             message.error = f"{error_code or ''} {error_message or ''}".strip()
         message.updated_at = datetime.utcnow()
@@ -1313,6 +1355,9 @@ async def sendgrid_webhook(request: Request, db: Session = Depends(get_db)) -> J
                 message.provider_message_id = sg_message_id
             if status:
                 message.status = status
+                # SendGrid的"open"事件表示邮件被打开/已读
+                if status.lower() == "open" and message.read_at is None:
+                    message.read_at = datetime.utcnow()
             if reason:
                 message.error = reason
             message.updated_at = datetime.utcnow()
@@ -1323,3 +1368,208 @@ async def sendgrid_webhook(request: Request, db: Session = Depends(get_db)) -> J
         db.commit()
 
     return JSONResponse({"updated": updated})
+
+
+@app.get("/api/chat/{user_address}", response_model=ChatHistoryResponse)
+def get_chat_history(
+    user_address: str,
+    channel: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> ChatHistoryResponse:
+    """获取指定用户的聊天记录"""
+    query = db.query(Message).filter(
+        (Message.to_address == user_address) | (Message.from_address == user_address)
+    )
+
+    if channel:
+        query = query.filter(Message.channel == channel)
+
+    total = query.count()
+    unread_count = query.filter(Message.read_at.is_(None)).count()
+
+    messages = (
+        query.order_by(Message.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return ChatHistoryResponse(
+        messages=[_message_to_chat(msg) for msg in reversed(messages)],
+        total=total,
+        unread_count=unread_count,
+    )
+
+
+@app.get("/api/messages/whatsapp", response_model=ChatHistoryResponse)
+def list_whatsapp_messages(
+    status: Optional[str] = None,
+    to_address: Optional[str] = None,
+    created_from: Optional[datetime] = None,
+    created_to: Optional[datetime] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> ChatHistoryResponse:
+    """
+    分页返回所有 WhatsApp 消息列表。
+
+    - 默认返回所有 WhatsApp 消息（按创建时间倒序）
+    - 可选按状态、收件人、时间范围过滤
+    """
+    query = db.query(Message).filter(Message.channel == "whatsapp")
+
+    if status:
+        query = query.filter(Message.status == status)
+    if to_address:
+        query = query.filter(Message.to_address == to_address)
+    if created_from:
+        query = query.filter(Message.created_at >= created_from)
+    if created_to:
+        query = query.filter(Message.created_at <= created_to)
+
+    total = query.count()
+    unread_count = query.filter(Message.read_at.is_(None)).count()
+
+    messages = (
+        query.order_by(Message.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return ChatHistoryResponse(
+        messages=[_message_to_chat(msg) for msg in messages],
+        total=total,
+        unread_count=unread_count,
+    )
+
+
+@app.get("/api/users", response_model=UserListResponse)
+def list_users_with_messages(
+    channel: Optional[str] = None,
+    created_from: Optional[str] = None,
+    created_to: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> UserListResponse:
+    """
+    分页查询已发送消息的用户列表
+    
+    返回所有接收过消息的用户地址，以及每个用户的统计信息。
+    """
+    # 解析时间参数
+    from_datetime = None
+    to_datetime = None
+    if created_from:
+        try:
+            from_datetime = datetime.fromisoformat(created_from.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    if created_to:
+        try:
+            to_datetime = datetime.fromisoformat(created_to.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    
+    # 构建基础查询
+    base_query = db.query(Message.to_address)
+    
+    if channel:
+        base_query = base_query.filter(Message.channel == channel)
+    if from_datetime:
+        base_query = base_query.filter(Message.created_at >= from_datetime)
+    if to_datetime:
+        base_query = base_query.filter(Message.created_at <= to_datetime)
+    
+    # 获取所有不同的用户地址
+    distinct_users = base_query.distinct().all()
+    total_users = len(distinct_users)
+    
+    # 分页
+    paginated_users = distinct_users[offset:offset + limit]
+    
+    # 为每个用户统计信息
+    user_stats_list = []
+    for (user_address,) in paginated_users:
+        user_query = db.query(Message).filter(Message.to_address == user_address)
+        
+        if channel:
+            user_query = user_query.filter(Message.channel == channel)
+        if from_datetime:
+            user_query = user_query.filter(Message.created_at >= from_datetime)
+        if to_datetime:
+            user_query = user_query.filter(Message.created_at <= to_datetime)
+        
+        total_messages = user_query.count()
+        unread_count = user_query.filter(Message.read_at.is_(None)).count()
+        
+        # 获取最后一条消息的时间
+        last_message = (
+            user_query.order_by(Message.created_at.desc()).first()
+        )
+        last_message_at = last_message.created_at if last_message else None
+        
+        # 获取使用的渠道列表
+        channels_query = (
+            db.query(Message.channel)
+            .filter(Message.to_address == user_address)
+            .distinct()
+        )
+        if channel:
+            channels_query = channels_query.filter(Message.channel == channel)
+        if from_datetime:
+            channels_query = channels_query.filter(Message.created_at >= from_datetime)
+        if to_datetime:
+            channels_query = channels_query.filter(Message.created_at <= to_datetime)
+        
+        channels = [ch[0] for ch in channels_query.all()]
+        
+        user_stats_list.append(
+            UserMessageStats(
+                user_address=user_address,
+                total_messages=total_messages,
+                unread_count=unread_count,
+                last_message_at=last_message_at,
+                channels=channels,
+            )
+        )
+    
+    # 按最后消息时间倒序排序
+    user_stats_list.sort(key=lambda x: x.last_message_at or datetime.min, reverse=True)
+    
+    return UserListResponse(
+        users=user_stats_list,
+        total=total_users,
+    )
+
+
+@app.post("/api/chat/mark-read", response_model=MarkReadResponse)
+def mark_messages_read(
+    request: MarkReadRequest,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> MarkReadResponse:
+    """
+    手动标记消息为已读（备用功能）
+    
+    注意：已读状态通常通过以下方式自动更新：
+    - WhatsApp: Twilio webhook 在消息状态为 "read" 时自动更新
+    - Email: SendGrid webhook 在邮件 "open" 事件时自动更新
+    
+    此API主要用于手动标记，适用于webhook未正确触发的情况。
+    """
+    now = datetime.utcnow()
+    updated = (
+        db.query(Message)
+        .filter(Message.id.in_(request.message_ids), Message.read_at.is_(None))
+        .update({"read_at": now}, synchronize_session=False)
+    )
+    db.commit()
+    return MarkReadResponse(updated=updated)

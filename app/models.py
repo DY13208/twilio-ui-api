@@ -20,6 +20,7 @@ class Message(Base):
     status = Column(String(32), index=True, nullable=False)
     provider_message_id = Column(String(128), index=True)
     error = Column(Text)
+    read_at = Column(DateTime, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

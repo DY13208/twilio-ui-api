@@ -179,6 +179,7 @@ class MessageStatus(BaseModel):
     status: str
     provider_message_id: Optional[str]
     error: Optional[str]
+    read_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -187,3 +188,52 @@ class MessageStatus(BaseModel):
     else:
         class Config:  # pydantic v1 compatibility
             orm_mode = True
+
+
+class ChatMessage(BaseModel):
+    id: int
+    batch_id: str
+    channel: str
+    to_address: str
+    from_address: str
+    subject: Optional[str]
+    body: Optional[str]
+    status: str
+    provider_message_id: Optional[str]
+    error: Optional[str]
+    read_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    if ConfigDict:
+        model_config = ConfigDict(from_attributes=True)
+    else:
+        class Config:  # pydantic v1 compatibility
+            orm_mode = True
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: List[ChatMessage]
+    total: int
+    unread_count: int
+
+
+class MarkReadRequest(BaseModel):
+    message_ids: List[int] = Field(..., min_length=1)
+
+
+class MarkReadResponse(BaseModel):
+    updated: int
+
+
+class UserMessageStats(BaseModel):
+    user_address: str
+    total_messages: int
+    unread_count: int
+    last_message_at: Optional[datetime] = None
+    channels: List[str] = []
+
+
+class UserListResponse(BaseModel):
+    users: List[UserMessageStats]
+    total: int
