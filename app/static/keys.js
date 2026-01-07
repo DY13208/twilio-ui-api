@@ -1,4 +1,6 @@
 const API_KEY_STORAGE = "broadcast_api_key";
+const ADMIN_TOKEN_STORAGE = "admin_jwt";
+const ADMIN_USER_ID_STORAGE = "admin_user_id";
 
 const currentKeyEl = document.getElementById("current-api-key");
 const currentKeySaveBtn = document.getElementById("current-api-key-save");
@@ -6,6 +8,7 @@ const currentKeyClearBtn = document.getElementById("current-api-key-clear");
 const newKeyNameEl = document.getElementById("new-key-name");
 const newKeyScopeEl = document.getElementById("new-key-scope");
 const newKeyExpireEl = document.getElementById("new-key-expire");
+const newKeyOwnerEl = document.getElementById("new-key-owner");
 const newKeyCreateBtn = document.getElementById("new-key-create");
 const newKeyResultEl = document.getElementById("new-key-result");
 const newKeyCopyBtn = document.getElementById("new-key-copy");
@@ -16,8 +19,10 @@ const adminUserPasswordEl = document.getElementById("admin-user-password");
 const adminUserSaveBtn = document.getElementById("admin-user-save");
 const adminUsersListEl = document.getElementById("admin-users-list");
 const toastContainer = document.getElementById("toast-container");
+const DISPLAY_TIME_ZONE = "Asia/Shanghai";
 
 let lastCreatedKey = "";
+let adminUsersCache = [];
 
 function showToast(message, type = "info") {
   if (!toastContainer) {
@@ -54,13 +59,70 @@ function setStoredApiKey(value) {
   }
 }
 
+function getStoredAdminToken() {
+  if (typeof localStorage === "undefined") {
+    return "";
+  }
+  return (localStorage.getItem(ADMIN_TOKEN_STORAGE) || "").trim();
+}
+
+function getStoredAdminUserId() {
+  if (typeof localStorage === "undefined") {
+    return "";
+  }
+  return (localStorage.getItem(ADMIN_USER_ID_STORAGE) || "").trim();
+}
+
+function storeAdminSession(data) {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+  if (data && data.token) {
+    localStorage.setItem(ADMIN_TOKEN_STORAGE, data.token);
+  }
+  if (data && Number.isFinite(data.admin_user_id)) {
+    localStorage.setItem(ADMIN_USER_ID_STORAGE, String(data.admin_user_id));
+  }
+}
+
 async function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
   const apiKey = getStoredApiKey();
   if (apiKey) {
     headers.set("X-API-Key", apiKey);
   }
-  return fetch(url, { ...options, headers });
+  const adminToken = getStoredAdminToken();
+  if (adminToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${adminToken}`);
+  }
+  return fetch(url, { credentials: "same-origin", ...options, headers });
+}
+
+async function ensureAdminToken() {
+  const existing = getStoredAdminToken();
+  if (existing) {
+    return existing;
+  }
+  try {
+    const response = await fetch("api/admin/token", { credentials: "same-origin" });
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (error) {
+      data = {};
+    }
+    if (!response.ok) {
+      throw new Error(data.detail || "管理员登录已失效，请重新登录。");
+    }
+    if (!data.token) {
+      throw new Error("管理员令牌缺失，请重新登录。");
+    }
+    storeAdminSession(data);
+    return data.token;
+  } catch (error) {
+    showToast(error.message || "管理员令牌缺失，请重新登录。", "error");
+    return "";
+  }
 }
 
 function formatDate(value) {
@@ -68,7 +130,24 @@ function formatDate(value) {
     return "未记录";
   }
   try {
-    return new Date(value).toLocaleString();
+    const text = String(value).trim();
+    if (!text) {
+      return "未记录";
+    }
+    const hasTimezone = /[zZ]|[+\-]\d{2}:?\d{2}$/.test(text);
+    const normalized = hasTimezone ? text : `${text}Z`;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+    return date.toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: DISPLAY_TIME_ZONE,
+    });
   } catch (error) {
     return value;
   }
@@ -92,6 +171,29 @@ function renderStoredKey() {
     return;
   }
   currentKeyEl.value = getStoredApiKey();
+}
+
+function renderOwnerOptions(items) {
+  if (!newKeyOwnerEl) {
+    return;
+  }
+  newKeyOwnerEl.innerHTML = "";
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "当前管理员";
+  newKeyOwnerEl.appendChild(defaultOption);
+  items
+    .filter((item) => !item.disabled_at)
+    .forEach((item) => {
+      const option = document.createElement("option");
+      option.value = String(item.id);
+      option.textContent = item.username;
+      newKeyOwnerEl.appendChild(option);
+    });
+  const storedId = getStoredAdminUserId();
+  if (storedId) {
+    newKeyOwnerEl.value = storedId;
+  }
 }
 
 function renderKeys(items) {
@@ -125,6 +227,12 @@ function renderKeys(items) {
     const scope = document.createElement("div");
     scope.textContent = `权限：${formatScope(item.scope)}`;
     meta.appendChild(scope);
+
+    if (item.admin_username || item.admin_user_id) {
+      const owner = document.createElement("div");
+      owner.textContent = `所属管理员：${item.admin_username || item.admin_user_id}`;
+      meta.appendChild(owner);
+    }
 
     const created = document.createElement("div");
     created.textContent = `创建时间：${formatDate(item.created_at)}`;
@@ -170,7 +278,9 @@ function renderKeys(items) {
 
 async function loadKeys() {
   try {
-    const response = await apiFetch("api/keys");
+    const adminUserId = getStoredAdminUserId();
+    const url = adminUserId ? `api/keys?admin_user_id=${adminUserId}` : "api/keys";
+    const response = await apiFetch(url);
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.detail || "加载失败。");
@@ -194,15 +304,26 @@ async function createKey() {
     }
     expiresInDays = parsed;
   }
+  let ownerId = null;
+  if (newKeyOwnerEl && newKeyOwnerEl.value) {
+    const parsedOwner = Number.parseInt(newKeyOwnerEl.value, 10);
+    if (Number.isFinite(parsedOwner)) {
+      ownerId = parsedOwner;
+    }
+  }
+  const payload = {
+    name,
+    scope,
+    expires_in_days: expiresInDays,
+  };
+  if (ownerId !== null) {
+    payload.admin_user_id = ownerId;
+  }
   try {
     const response = await apiFetch("api/keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name,
-        scope,
-        expires_in_days: expiresInDays,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await response.json();
     if (!response.ok) {
@@ -305,7 +426,9 @@ async function loadAdminUsers() {
     if (!response.ok) {
       throw new Error(data.detail || "加载失败。");
     }
-    renderAdminUsers(data.users || []);
+    adminUsersCache = data.users || [];
+    renderAdminUsers(adminUsersCache);
+    renderOwnerOptions(adminUsersCache);
   } catch (error) {
     showToast(error.message || "加载失败。", "error");
   }
@@ -413,6 +536,14 @@ currentKeyClearBtn.addEventListener("click", () => {
   showToast("已清除。", "success");
 });
 
+async function initAdmin() {
+  const token = await ensureAdminToken();
+  if (!token) {
+    return;
+  }
+  loadKeys();
+  loadAdminUsers();
+}
+
 renderStoredKey();
-loadKeys();
-loadAdminUsers();
+initAdmin();

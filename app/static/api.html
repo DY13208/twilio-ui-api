@@ -13,7 +13,9 @@
         <div class="subtitle">接口说明、参数与注意事项。</div>
         <div class="header-links">
           <a href="./" class="link">返回控制台</a>
+          <a href="sms" class="link">短信营销</a>
           <a href="keys" class="link">Key 管理</a>
+          <a href="users" class="link">用户管理</a>
           <a href="logout" class="link">退出</a>
         </div>
       </header>
@@ -23,7 +25,7 @@
         <p>基础地址：<code>http://localhost:8991</code></p>
         <ul>
           <li>请求体使用 JSON，需设置 <code>Content-Type: application/json</code>。</li>
-          <li>本服务不含鉴权，建议仅在内网或受控环境使用。</li>
+          <li>Admin APIs use JWT tokens; message APIs use API keys.</li>
           <li>发件人白名单默认包含环境变量中的配置：</li>
           <li><code>SENDGRID_FROM_EMAIL</code> 与 <code>TWILIO_WHATSAPP_FROM</code> 受保护不可删除。</li>
         </ul>
@@ -32,7 +34,9 @@
       <section class="card docs">
         <h2>认证与 Key</h2>
         <p><code>POST /api/login</code> 管理员登录，成功后写入 Cookie。</p>
+        <p><code>GET /api/admin/token</code> issue admin JWT from session cookie.</p>
         <p>返回 <code>{ "status": "ok", "token": "..." }</code>（不包含 API Key）。</p>
+        <p>Admin APIs require <code>Authorization: Bearer &lt;token&gt;</code> (JWT).</p>
         <pre>{
   "username": "admin",
   "password": "your-password"
@@ -43,9 +47,11 @@
         <pre>{
   "name": "Marketing Team",
   "scope": "send",
-  "expires_in_days": 30
+  "expires_in_days": 30,
+  "admin_user_id": 1
 }</pre>
         <p><code>POST /api/keys/{key_id}/revoke</code> 撤销 Key（需管理员登录）。</p>
+        <p><code>PATCH /api/keys/{key_id}</code> update key scope/owner (admin token required).</p>
         <p><code>GET /api/admin/users</code> 获取管理员用户列表（需管理员登录）。</p>
         <p><code>POST /api/admin/users</code> 新增/重置管理员用户密码（需管理员登录）。</p>
         <pre>{
@@ -54,7 +60,9 @@
 }</pre>
         <p><code>POST /api/admin/users/{user_id}/disable</code> 禁用管理员用户（需管理员登录）。</p>
         <p><code>POST /api/admin/users/{user_id}/enable</code> 启用管理员用户（需管理员登录）。</p>
+        <p><code>DELETE /api/admin/users/{user_id}</code> delete an admin user (admin token required).</p>
         <ul>
+          <li>Admin APIs use <code>Authorization: Bearer</code> with the login token.</li>
           <li>所有 API Key 在调用 <code>/api</code> 接口时通过 <code>X-API-Key</code> 或 <code>Authorization: Bearer</code> 传递。</li>
           <li>新建 Key 可设置 <code>scope</code>（read/send/manage）与 <code>expires_in_days</code>。</li>
         </ul>
@@ -153,14 +161,82 @@
       </section>
 
       <section class="card docs">
+        <h2>短信发送</h2>
+        <p><code>POST /api/send/sms</code> 发送短信。</p>
+        <pre>{
+  "recipients": ["+8613712345678"],
+  "message": "您好，优惠已上线",
+  "from_number": "+1234567890",
+  "messaging_service_sid": "MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "rate_per_minute": 30,
+  "batch_size": 100,
+  "append_opt_out": true
+}</pre>
+        <ul>
+          <li><code>message</code> 与 <code>template_id</code> 至少提供一个。</li>
+          <li><code>template_variables</code> 为 JSON 对象，可选。</li>
+          <li>支持配置默认发送来源：<code>TWILIO_SMS_FROM</code> 或 <code>TWILIO_SMS_MESSAGING_SERVICE_SID</code>。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>短信模板</h2>
+        <p><code>GET /api/sms/templates</code> 获取模板列表。</p>
+        <p><code>POST /api/sms/templates</code> 创建模板。</p>
+        <pre>{
+  "name": "节日优惠",
+  "body": "{name}您好，优惠券{code}已到账。",
+  "variables": ["name", "code"]
+}</pre>
+        <p><code>PATCH /api/sms/templates/{template_id}</code> 更新模板。</p>
+        <p><code>DELETE /api/sms/templates/{template_id}</code> 停用模板。</p>
+        <ul>
+          <li>停用模板后可通过 <code>PATCH</code> 设置 <code>disabled=false</code> 重新启用。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>联系人与分组</h2>
+        <p><code>GET /api/sms/contacts</code> 查询联系人（支持 search/tag/分页）。</p>
+        <p><code>POST /api/sms/contacts</code> 新增或更新联系人。</p>
+        <p><code>PATCH /api/sms/contacts/{contact_id}</code> 更新联系人。</p>
+        <p><code>DELETE /api/sms/contacts/{contact_id}</code> 停用联系人。</p>
+        <p><code>POST /api/sms/contacts/import</code> 导入 CSV（可选 group_id）。</p>
+        <p><code>GET /api/sms/contacts/export</code> 导出 CSV。</p>
+        <p><code>GET /api/sms/groups</code> / <code>POST /api/sms/groups</code> 分组管理。</p>
+        <p><code>GET/POST/DELETE /api/sms/groups/{group_id}/members</code> 分组成员管理。</p>
+      </section>
+
+      <section class="card docs">
+        <h2>短信营销活动</h2>
+        <p><code>GET /api/sms/campaigns</code> 获取活动列表。</p>
+        <p><code>POST /api/sms/campaigns</code> 创建活动。</p>
+        <p><code>PATCH /api/sms/campaigns/{campaign_id}</code> 更新活动。</p>
+        <p><code>POST /api/sms/campaigns/{campaign_id}/schedule</code> 设置排期。</p>
+        <p><code>POST /api/sms/campaigns/{campaign_id}/start</code> 立即启动。</p>
+        <p><code>POST /api/sms/campaigns/{campaign_id}/pause</code> 暂停。</p>
+        <p><code>POST /api/sms/campaigns/{campaign_id}/resume</code> 恢复。</p>
+        <p><code>POST /api/sms/campaigns/{campaign_id}/cancel</code> 取消。</p>
+        <p><code>GET /api/sms/campaigns/{campaign_id}/stats</code> 活动统计。</p>
+        <p><code>GET /api/sms/stats</code> 查看总体统计。</p>
+      </section>
+
+      <section class="card docs">
+        <h2>关键词与退订</h2>
+        <p><code>GET/POST/PATCH/DELETE /api/sms/keywords</code> 关键词自动回复规则。</p>
+        <p><code>GET/POST/DELETE /api/sms/opt-outs</code> 退订名单。</p>
+        <p><code>GET/POST/DELETE /api/sms/blacklist</code> 黑名单。</p>
+      </section>
+
+      <section class="card docs">
         <h2>状态与历史查询</h2>
         <p><code>GET /api/status/{message_id}</code> 查询单条消息状态。</p>
         <p><code>GET /api/status/twilio/{message_sid}</code> 直接从 Twilio 查询消息状态（可选参数 <code>use_proxy</code>）。</p>
         <p><code>GET /api/batch/{batch_id}</code> 查询批次消息列表。</p>
-        <p><code>GET /api/users</code> 分页查询已发送消息的用户列表。</p>
+        <p><code>GET /api/users</code> 分页查询有聊天记录的用户列表（包含回复）。</p>
         <pre>GET /api/users?channel=whatsapp&amp;created_from=2025-01-01T00:00:00&amp;limit=50&amp;offset=0</pre>
         <ul>
-          <li><code>channel</code>：可选，<code>email</code> 或 <code>whatsapp</code>。</li>
+          <li><code>channel</code>：可选，<code>email</code> / <code>whatsapp</code> / <code>sms</code>。</li>
           <li><code>created_from</code>/<code>created_to</code>：可选，ISO8601 时间范围。</li>
           <li><code>limit</code>：可选，每页数量，默认 50。</li>
           <li><code>offset</code>：可选，偏移量，默认 0。</li>
@@ -168,22 +244,23 @@
           <li>每个用户包含：<code>user_address</code>、<code>total_messages</code>、<code>unread_count</code>、<code>last_message_at</code>、<code>channels</code>。</li>
           <li>用户列表按最后消息时间倒序排列。</li>
         </ul>
-        <p><code>GET /api/chat/{user_address}</code> 按用户查看聊天记录（Email + WhatsApp）。</p>
+        <p><code>GET /api/chat/{user_address}</code> 按用户查看聊天记录（Email + WhatsApp + SMS）。</p>
         <pre>GET /api/chat/{user_address}?channel=whatsapp&amp;limit=50&amp;offset=0</pre>
         <ul>
-          <li><code>user_address</code>：用户地址，例如 <code>user@example.com</code> 或 <code>whatsapp:+86137...</code>。</li>
-          <li><code>channel</code>：可选，<code>email</code> 或 <code>whatsapp</code>。</li>
+          <li><code>user_address</code>：用户地址，例如 <code>user@example.com</code>、<code>whatsapp:+86137...</code> 或 <code>+86137...</code>。</li>
+          <li><code>channel</code>：可选，<code>email</code> / <code>whatsapp</code> / <code>sms</code>。</li>
           <li><code>limit</code>：可选，每页数量，默认 100。</li>
           <li><code>offset</code>：可选，偏移量，默认 0。</li>
           <li>返回字段中包含 <code>read_at</code>（已读时间），该字段通常由 Twilio/SendGrid 的 webhook 自动更新。</li>
           <li>返回格式：<code>{ "messages": [...], "total": 100, "unread_count": 5 }</code></li>
         </ul>
-        <p><code>GET /api/messages/whatsapp</code> 分页返回已发送 WhatsApp 消息列表。</p>
+        <p><code>GET /api/messages/whatsapp</code> 分页返回 WhatsApp 消息列表（含回复）。</p>
         <pre>GET /api/messages/whatsapp?status=delivered&amp;created_from=2025-01-01T00:00:00&amp;limit=50&amp;offset=0</pre>
         <ul>
-          <li><code>status</code>：可选，<code>queued</code>/<code>accepted</code>/<code>delivered</code>/<code>read</code>/<code>failed</code>。</li>
+          <li><code>status</code>：可选，<code>queued</code>/<code>accepted</code>/<code>delivered</code>/<code>read</code>/<code>received</code>/<code>failed</code>。</li>
           <li><code>created_from</code>/<code>created_to</code>：可选，ISO8601 时间范围（例如：<code>2025-01-01T00:00:00</code>）。</li>
           <li><code>to_address</code>：可选，只看发给某个收件人的消息（例如：<code>whatsapp:+86137...</code>）。</li>
+          <li><code>user_address</code>：可选，按对话用户过滤（同时匹配 to/from）。</li>
           <li><code>limit</code>：可选，每页数量，默认 100。</li>
           <li><code>offset</code>：可选，偏移量，默认 0。</li>
           <li>返回格式：<code>{ "messages": [...], "total": 100, "unread_count": 5 }</code></li>
@@ -206,7 +283,11 @@
       <section class="card docs">
         <h2>Webhooks</h2>
         <p><code>POST /webhooks/twilio/whatsapp</code> 接收 Twilio 状态回调。</p>
+        <p><code>POST /webhooks/twilio/whatsapp/inbound</code> receive inbound WhatsApp messages.</p>
+        <p><code>POST /webhooks/twilio/sms/status</code> 接收 Twilio SMS 状态回调。</p>
+        <p><code>POST /webhooks/twilio/sms/inbound</code> 接收 SMS 上行消息。</p>
         <p><code>POST /webhooks/sendgrid</code> 接收 SendGrid 事件。</p>
+        <p><code>POST /webhooks/sendgrid/inbound</code> receive SendGrid Inbound Parse payloads.</p>
         <ul>
           <li>配置对外地址时需设置 <code>PUBLIC_BASE_URL</code>。</li>
           <li>可启用签名校验：<code>TWILIO_VALIDATE_WEBHOOK_SIGNATURE</code> 与

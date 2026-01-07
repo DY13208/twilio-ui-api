@@ -84,12 +84,21 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     status: str
     token: Optional[str] = None
+    admin_user_id: Optional[int] = None
+    username: Optional[str] = None
+    expires_at: Optional[datetime] = None
 
 
 class ApiKeyCreate(BaseModel):
     name: Optional[str] = None
     scope: Optional[str] = None
     expires_in_days: Optional[int] = None
+    admin_user_id: Optional[int] = None
+
+
+class ApiKeyUpdate(BaseModel):
+    scope: Optional[str] = None
+    admin_user_id: Optional[int] = None
 
 
 class ApiKeyItem(BaseModel):
@@ -97,6 +106,8 @@ class ApiKeyItem(BaseModel):
     name: Optional[str] = None
     prefix: str
     scope: str
+    admin_user_id: Optional[int] = None
+    admin_username: Optional[str] = None
     expires_at: Optional[datetime] = None
     created_at: datetime
     last_used_at: Optional[datetime] = None
@@ -112,6 +123,8 @@ class ApiKeyCreateResponse(BaseModel):
     name: Optional[str] = None
     prefix: str
     scope: str
+    admin_user_id: Optional[int] = None
+    admin_username: Optional[str] = None
     expires_at: Optional[datetime] = None
     api_key: str
     created_at: datetime
@@ -237,3 +250,260 @@ class UserMessageStats(BaseModel):
 class UserListResponse(BaseModel):
     users: List[UserMessageStats]
     total: int
+
+
+class SmsTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    body: str = Field(..., min_length=1)
+    variables: Optional[List[str]] = None
+
+
+class SmsTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    body: Optional[str] = None
+    variables: Optional[List[str]] = None
+    disabled: Optional[bool] = None
+
+
+class SmsTemplateItem(BaseModel):
+    id: int
+    name: str
+    body: str
+    variables: Optional[List[str]] = None
+    disabled_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SmsTemplateListResponse(BaseModel):
+    templates: List[SmsTemplateItem]
+
+
+class SmsContactCreate(BaseModel):
+    phone: str = Field(..., min_length=1)
+    name: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class SmsContactUpdate(BaseModel):
+    name: Optional[str] = None
+    tags: Optional[List[str]] = None
+    disabled: Optional[bool] = None
+
+
+class SmsContactItem(BaseModel):
+    id: int
+    phone: str
+    name: Optional[str] = None
+    tags: List[str] = []
+    disabled_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SmsContactListResponse(BaseModel):
+    contacts: List[SmsContactItem]
+    total: int
+
+
+class SmsGroupCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: Optional[str] = None
+
+
+class SmsGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class SmsGroupItem(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    member_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class SmsGroupListResponse(BaseModel):
+    groups: List[SmsGroupItem]
+
+
+class SmsGroupMembersRequest(BaseModel):
+    contact_ids: Optional[List[int]] = None
+    phones: Optional[List[str]] = None
+
+
+class SmsGroupMembersResponse(BaseModel):
+    group_id: int
+    members: List[SmsContactItem]
+
+
+class SmsCampaignCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    message: Optional[str] = None
+    template_id: Optional[int] = None
+    template_variables: Optional[Dict[str, str]] = None
+    variant_a: Optional[str] = None
+    variant_b: Optional[str] = None
+    ab_split: Optional[int] = None
+    schedule_at: Optional[datetime] = None
+    from_number: Optional[str] = None
+    messaging_service_sid: Optional[str] = None
+    rate_per_minute: Optional[int] = None
+    batch_size: Optional[int] = None
+    append_opt_out: Optional[bool] = None
+    group_ids: Optional[List[int]] = None
+    tags: Optional[List[str]] = None
+    recipients: Optional[List[str]] = None
+
+
+class SmsCampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    message: Optional[str] = None
+    template_id: Optional[int] = None
+    template_variables: Optional[Dict[str, str]] = None
+    variant_a: Optional[str] = None
+    variant_b: Optional[str] = None
+    ab_split: Optional[int] = None
+    schedule_at: Optional[datetime] = None
+    from_number: Optional[str] = None
+    messaging_service_sid: Optional[str] = None
+    rate_per_minute: Optional[int] = None
+    batch_size: Optional[int] = None
+    append_opt_out: Optional[bool] = None
+    group_ids: Optional[List[int]] = None
+    tags: Optional[List[str]] = None
+    recipients: Optional[List[str]] = None
+    status: Optional[str] = None
+
+
+class SmsCampaignItem(BaseModel):
+    id: int
+    name: str
+    message: Optional[str] = None
+    template_id: Optional[int] = None
+    template_variables: Optional[Dict[str, str]] = None
+    variant_a: Optional[str] = None
+    variant_b: Optional[str] = None
+    ab_split: Optional[int] = None
+    status: str
+    schedule_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    from_number: Optional[str] = None
+    messaging_service_sid: Optional[str] = None
+    rate_per_minute: Optional[int] = None
+    batch_size: Optional[int] = None
+    append_opt_out: Optional[bool] = None
+    group_ids: List[int] = []
+    tags: List[str] = []
+    recipients: List[str] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+class SmsCampaignListResponse(BaseModel):
+    campaigns: List[SmsCampaignItem]
+
+
+class SmsCampaignStatsResponse(BaseModel):
+    campaign_id: int
+    total: int
+    delivered: int
+    failed: int
+    undelivered: int
+    queued: int
+    sent: int
+    received: int
+    blocked: int
+    cost: Optional[float] = None
+    price_unit: Optional[str] = None
+    variants: Optional[Dict[str, Dict[str, int]]] = None
+
+
+class SmsSendRequest(BaseModel):
+    recipients: List[str] = Field(..., min_length=1)
+    message: Optional[str] = None
+    template_id: Optional[int] = None
+    template_variables: Optional[Dict[str, str]] = None
+    from_number: Optional[str] = None
+    messaging_service_sid: Optional[str] = None
+    rate_per_minute: Optional[int] = None
+    batch_size: Optional[int] = None
+    append_opt_out: Optional[bool] = None
+
+
+class SmsKeywordRuleCreate(BaseModel):
+    keyword: str = Field(..., min_length=1)
+    match_type: str = Field(..., min_length=1)
+    response_text: str = Field(..., min_length=1)
+    enabled: Optional[bool] = True
+
+
+class SmsKeywordRuleUpdate(BaseModel):
+    keyword: Optional[str] = None
+    match_type: Optional[str] = None
+    response_text: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class SmsKeywordRuleItem(BaseModel):
+    id: int
+    keyword: str
+    match_type: str
+    response_text: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class SmsKeywordRuleListResponse(BaseModel):
+    rules: List[SmsKeywordRuleItem]
+
+
+class SmsOptOutCreate(BaseModel):
+    phone: str = Field(..., min_length=1)
+    reason: Optional[str] = None
+    source: Optional[str] = None
+
+
+class SmsOptOutItem(BaseModel):
+    id: int
+    phone: str
+    reason: Optional[str] = None
+    source: Optional[str] = None
+    created_at: datetime
+
+
+class SmsOptOutListResponse(BaseModel):
+    opt_outs: List[SmsOptOutItem]
+
+
+class SmsBlacklistCreate(BaseModel):
+    phone: str = Field(..., min_length=1)
+    reason: Optional[str] = None
+
+
+class SmsBlacklistItem(BaseModel):
+    id: int
+    phone: str
+    reason: Optional[str] = None
+    created_at: datetime
+
+
+class SmsBlacklistListResponse(BaseModel):
+    blacklist: List[SmsBlacklistItem]
+
+
+class SmsStatsResponse(BaseModel):
+    total: int
+    delivered: int
+    failed: int
+    undelivered: int
+    queued: int
+    sent: int
+    received: int
+    blocked: int
+    cost: Optional[float] = None
+    price_unit: Optional[str] = None

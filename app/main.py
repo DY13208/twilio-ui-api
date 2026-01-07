@@ -1,5 +1,14 @@
 from datetime import datetime, timedelta
+from email.utils import getaddresses
+import base64
+import csv
+import io
+import random
+import re
+import threading
+import time
 import hashlib
+import hmac
 import json
 import posixpath
 from pathlib import Path
@@ -8,20 +17,37 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, UploadFile, File
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, text, func, distinct
+from sqlalchemy import inspect, text, func, distinct, case
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal, engine, get_db
-from app.models import AdminSession, AdminUser, ApiKey, Base, EmailSender, Message, WhatsAppSender
+from app.models import (
+    AdminSession,
+    AdminUser,
+    ApiKey,
+    Base,
+    EmailSender,
+    Message,
+    WhatsAppSender,
+    SmsTemplate,
+    SmsContact,
+    SmsGroup,
+    SmsGroupMember,
+    SmsCampaign,
+    SmsKeywordRule,
+    SmsOptOut,
+    SmsBlacklist,
+)
 from app.schemas import (
     ApiKeyCreate,
     ApiKeyCreateResponse,
     ApiKeyItem,
     ApiKeyListResponse,
+    ApiKeyUpdate,
     AdminUserCreate,
     AdminUserItem,
     AdminUserListResponse,
@@ -39,6 +65,37 @@ from app.schemas import (
     MessageStatus,
     SendResponse,
     SendResult,
+    SmsTemplateCreate,
+    SmsTemplateUpdate,
+    SmsTemplateItem,
+    SmsTemplateListResponse,
+    SmsContactCreate,
+    SmsContactUpdate,
+    SmsContactItem,
+    SmsContactListResponse,
+    SmsGroupCreate,
+    SmsGroupUpdate,
+    SmsGroupItem,
+    SmsGroupListResponse,
+    SmsGroupMembersRequest,
+    SmsGroupMembersResponse,
+    SmsCampaignCreate,
+    SmsCampaignUpdate,
+    SmsCampaignItem,
+    SmsCampaignListResponse,
+    SmsCampaignStatsResponse,
+    SmsSendRequest,
+    SmsKeywordRuleCreate,
+    SmsKeywordRuleUpdate,
+    SmsKeywordRuleItem,
+    SmsKeywordRuleListResponse,
+    SmsOptOutCreate,
+    SmsOptOutItem,
+    SmsOptOutListResponse,
+    SmsBlacklistCreate,
+    SmsBlacklistItem,
+    SmsBlacklistListResponse,
+    SmsStatsResponse,
     TwilioMessageStatus,
     UserListResponse,
     UserMessageStats,
@@ -56,6 +113,7 @@ from app.services.twilio_client import TwilioService, normalize_whatsapp
 app = FastAPI(title="Twilio Broadcast Console")
 
 static_dir = Path(__file__).resolve().parent / "static"
+_sms_scheduler_started = False
 
 
 class AuthStaticFiles(StaticFiles):
@@ -80,6 +138,8 @@ app.mount("/static", AuthStaticFiles(directory=static_dir), name="static")
 
 ADMIN_COOKIE_NAME = "admin_session"
 API_KEY_HEADER = "X-API-Key"
+ADMIN_TOKEN_HEADER = "Authorization"
+ADMIN_TOKEN_PREFIX = "Bearer "
 
 
 @app.on_event("startup")
@@ -88,6 +148,7 @@ def startup() -> None:
     _ensure_schema()
     with SessionLocal() as db:
         _bootstrap_admin_user(db)
+    _start_sms_scheduler()
 
 
 @app.get("/", response_class=FileResponse)
@@ -109,6 +170,13 @@ def keys_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     return FileResponse(static_dir / "keys.html", media_type="text/html; charset=utf-8")
 
 
+@app.get("/users", response_class=FileResponse)
+def users_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
+    if not _get_admin_session(request, db):
+        return RedirectResponse(url=_login_redirect_path(request))
+    return FileResponse(static_dir / "users.html", media_type="text/html; charset=utf-8")
+
+
 @app.get("/api-docs", response_class=FileResponse)
 def api_docs(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     if not _get_admin_session(request, db):
@@ -121,6 +189,13 @@ def chat_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     if not _get_admin_session(request, db):
         return RedirectResponse(url=_login_redirect_path(request))
     return FileResponse(static_dir / "chat.html", media_type="text/html; charset=utf-8")
+
+
+@app.get("/sms", response_class=FileResponse)
+def sms_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
+    if not _get_admin_session(request, db):
+        return RedirectResponse(url=_login_redirect_path(request))
+    return FileResponse(static_dir / "sms.html", media_type="text/html; charset=utf-8")
 
 
 def _message_to_status(message: Message) -> MessageStatus:
@@ -155,6 +230,80 @@ def _message_to_chat(message: Message) -> ChatMessage:
         read_at=message.read_at,
         created_at=message.created_at,
         updated_at=message.updated_at,
+    )
+
+
+def _sms_template_to_item(template: SmsTemplate) -> SmsTemplateItem:
+    return SmsTemplateItem(
+        id=template.id,
+        name=template.name,
+        body=template.body,
+        variables=_deserialize_json_list(template.variables),
+        disabled_at=template.disabled_at,
+        created_at=template.created_at,
+        updated_at=template.updated_at,
+    )
+
+
+def _sms_contact_to_item(contact: SmsContact) -> SmsContactItem:
+    return SmsContactItem(
+        id=contact.id,
+        phone=contact.phone,
+        name=contact.name,
+        tags=_deserialize_tags(contact.tags),
+        disabled_at=contact.disabled_at,
+        created_at=contact.created_at,
+        updated_at=contact.updated_at,
+    )
+
+
+def _sms_group_to_item(group: SmsGroup, member_count: int = 0) -> SmsGroupItem:
+    return SmsGroupItem(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        member_count=member_count,
+        created_at=group.created_at,
+        updated_at=group.updated_at,
+    )
+
+
+def _sms_campaign_to_item(campaign: SmsCampaign) -> SmsCampaignItem:
+    return SmsCampaignItem(
+        id=campaign.id,
+        name=campaign.name,
+        message=campaign.message,
+        template_id=campaign.template_id,
+        template_variables=_deserialize_json_dict(campaign.template_variables),
+        variant_a=campaign.variant_a,
+        variant_b=campaign.variant_b,
+        ab_split=campaign.ab_split,
+        status=campaign.status,
+        schedule_at=campaign.schedule_at,
+        started_at=campaign.started_at,
+        completed_at=campaign.completed_at,
+        from_number=campaign.from_number,
+        messaging_service_sid=campaign.messaging_service_sid,
+        rate_per_minute=campaign.rate_per_minute,
+        batch_size=campaign.batch_size,
+        append_opt_out=campaign.append_opt_out,
+        group_ids=[int(value) for value in _deserialize_json_list(campaign.target_groups) if str(value).isdigit()],
+        tags=[str(value) for value in _deserialize_json_list(campaign.target_tags)],
+        recipients=[str(value) for value in _deserialize_json_list(campaign.target_recipients)],
+        created_at=campaign.created_at,
+        updated_at=campaign.updated_at,
+    )
+
+
+def _sms_keyword_rule_to_item(rule: SmsKeywordRule) -> SmsKeywordRuleItem:
+    return SmsKeywordRuleItem(
+        id=rule.id,
+        keyword=rule.keyword,
+        match_type=rule.match_type,
+        response_text=rule.response_text,
+        enabled=rule.enabled,
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
     )
 
 
@@ -193,6 +342,84 @@ def _verify_password(password: str, hashed: str) -> bool:
         return secrets.compare_digest(dk.hex(), digest)
     except Exception:
         return False
+
+
+def _get_admin_jwt_secret() -> str:
+    if settings.admin_jwt_secret:
+        return settings.admin_jwt_secret
+    if settings.admin_password:
+        return settings.admin_password
+    raise HTTPException(status_code=500, detail="ADMIN_JWT_SECRET is not configured")
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def _encode_admin_jwt(payload: Dict[str, Any], secret: str) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+    header_encoded = _base64url_encode(
+        json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    payload_encoded = _base64url_encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    signing_input = f"{header_encoded}.{payload_encoded}".encode("ascii")
+    signature = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    return f"{header_encoded}.{payload_encoded}.{_base64url_encode(signature)}"
+
+
+def _decode_admin_jwt(token: str, secret: str) -> Dict[str, Any]:
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise HTTPException(status_code=401, detail="admin token is invalid")
+    try:
+        header_raw = _base64url_decode(parts[0])
+        payload_raw = _base64url_decode(parts[1])
+    except Exception:
+        raise HTTPException(status_code=401, detail="admin token is invalid")
+    signature_raw = parts[2]
+    signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
+    expected_signature = _base64url_encode(
+        hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    )
+    if not secrets.compare_digest(expected_signature, signature_raw):
+        raise HTTPException(status_code=401, detail="admin token is invalid")
+    try:
+        header = json.loads(header_raw)
+        payload = json.loads(payload_raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=401, detail="admin token is invalid")
+    if header.get("alg") != "HS256":
+        raise HTTPException(status_code=401, detail="admin token is invalid")
+    exp = payload.get("exp")
+    if exp is not None:
+        try:
+            exp_value = int(exp)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=401, detail="admin token is invalid")
+        if exp_value <= int(datetime.utcnow().timestamp()):
+            raise HTTPException(status_code=401, detail="admin token is expired")
+    return payload
+
+
+def _issue_admin_jwt(session: AdminSession, user: AdminUser) -> str:
+    secret = _get_admin_jwt_secret()
+    now = int(datetime.utcnow().timestamp())
+    expires_at = int(session.expires_at.timestamp())
+    payload = {
+        "sub": user.id,
+        "username": user.username,
+        "sid": session.token,
+        "iat": now,
+        "exp": expires_at,
+    }
+    return _encode_admin_jwt(payload, secret)
 
 
 def _bootstrap_admin_user(db: Session) -> None:
@@ -310,8 +537,45 @@ def _ensure_schema() -> None:
             conn,
             inspector,
             "broadcast_messages",
-            {"read_at": "read_at DATETIME NULL"},
+            {
+                "read_at": "read_at DATETIME NULL",
+                "direction": "direction VARCHAR(16) NULL",
+                "campaign_id": "campaign_id INT NULL",
+                "template_id": "template_id INT NULL",
+                "variant": "variant VARCHAR(8) NULL",
+                "price": "price DECIMAL(10,4) NULL",
+                "price_unit": "price_unit VARCHAR(8) NULL",
+                "num_segments": "num_segments INT NULL",
+            },
         )
+        if inspector.has_table("broadcast_messages"):
+            conn.execute(
+                text(
+                    "UPDATE broadcast_messages "
+                    "SET direction='outbound' "
+                    "WHERE direction IS NULL OR direction = ''"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE broadcast_messages "
+                    "SET to_address = CONCAT('whatsapp:', to_address) "
+                    "WHERE channel='whatsapp' "
+                    "AND to_address IS NOT NULL "
+                    "AND to_address != '' "
+                    "AND to_address NOT LIKE 'whatsapp:%'"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE broadcast_messages "
+                    "SET from_address = CONCAT('whatsapp:', from_address) "
+                    "WHERE channel='whatsapp' "
+                    "AND from_address IS NOT NULL "
+                    "AND from_address != '' "
+                    "AND from_address NOT LIKE 'whatsapp:%'"
+                )
+            )
 
 
 def _normalize_scope(value: Optional[str]) -> str:
@@ -364,14 +628,20 @@ def _extract_api_key(request: Request) -> Optional[str]:
     header_value = request.headers.get(API_KEY_HEADER)
     if header_value:
         return header_value.strip()
-    auth_value = request.headers.get("Authorization", "")
+    auth_value = request.headers.get(ADMIN_TOKEN_HEADER, "")
     if auth_value.lower().startswith("bearer "):
         return auth_value[7:].strip()
     return None
 
 
-def _get_admin_session(request: Request, db: Session) -> Optional[AdminSession]:
-    token = request.cookies.get(ADMIN_COOKIE_NAME)
+def _extract_admin_token(request: Request) -> Optional[str]:
+    auth_value = request.headers.get(ADMIN_TOKEN_HEADER, "")
+    if auth_value.lower().startswith(ADMIN_TOKEN_PREFIX.lower()):
+        return auth_value[len(ADMIN_TOKEN_PREFIX) :].strip()
+    return None
+
+
+def _get_admin_session_by_token(token: str, db: Session) -> Optional[AdminSession]:
     if not token:
         return None
     session = db.query(AdminSession).filter(AdminSession.token == token).first()
@@ -389,12 +659,50 @@ def _get_admin_session(request: Request, db: Session) -> Optional[AdminSession]:
     return session
 
 
+def _get_admin_session(request: Request, db: Session) -> Optional[AdminSession]:
+    token = request.cookies.get(ADMIN_COOKIE_NAME)
+    if not token:
+        return None
+    return _get_admin_session_by_token(token, db)
+
+
+def _get_admin_session_from_jwt(token: str, db: Session) -> Optional[AdminSession]:
+    secret = _get_admin_jwt_secret()
+    payload = _decode_admin_jwt(token, secret)
+    session_token = payload.get("sid")
+    user_id = payload.get("sub")
+    if not session_token or user_id is None:
+        return None
+    session = _get_admin_session_by_token(str(session_token), db)
+    if not session:
+        return None
+    try:
+        user_id_value = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    if session.admin_user_id != user_id_value:
+        return None
+    return session
+
+
 def _require_admin(
     request: Request, db: Session = Depends(get_db)
 ) -> AdminSession:
     session = _get_admin_session(request, db)
     if not session:
         raise HTTPException(status_code=401, detail="admin login required")
+    return session
+
+
+def _require_admin_api(
+    request: Request, db: Session = Depends(get_db)
+) -> AdminSession:
+    token = _extract_admin_token(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="admin token required")
+    session = _get_admin_session_from_jwt(token, db)
+    if not session:
+        raise HTTPException(status_code=401, detail="admin token is invalid")
     return session
 
 
@@ -488,32 +796,67 @@ def login(
         raise HTTPException(status_code=401, detail="invalid credentials")
     if not _verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="invalid credentials")
-    token = secrets.token_urlsafe(32)
+    session_token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(minutes=settings.admin_session_ttl_minutes)
     session = AdminSession(
-        token=token,
+        token=session_token,
         admin_user_id=user.id,
         created_at=datetime.utcnow(),
         expires_at=expires_at,
     )
     db.add(session)
     db.commit()
-    _set_admin_cookie(response, token, request)
-    return LoginResponse(status="ok", token=token)
+    jwt_token = _issue_admin_jwt(session, user)
+    _set_admin_cookie(response, session_token, request)
+    return LoginResponse(
+        status="ok",
+        token=jwt_token,
+        admin_user_id=user.id,
+        username=user.username,
+        expires_at=expires_at,
+    )
 
 
 @app.post("/api/logout", response_model=LoginResponse)
 def logout(
     request: Request, response: Response, db: Session = Depends(get_db)
 ) -> LoginResponse:
-    token = request.cookies.get(ADMIN_COOKIE_NAME)
-    if token:
-        session = db.query(AdminSession).filter(AdminSession.token == token).first()
-        if session:
-            db.delete(session)
-            db.commit()
+    session = None
+    cookie_token = request.cookies.get(ADMIN_COOKIE_NAME)
+    if cookie_token:
+        session = db.query(AdminSession).filter(AdminSession.token == cookie_token).first()
+    if not session:
+        admin_token = _extract_admin_token(request)
+        if admin_token:
+            try:
+                session = _get_admin_session_from_jwt(admin_token, db)
+            except HTTPException:
+                session = None
+    if session:
+        db.delete(session)
+        db.commit()
     _clear_admin_cookie(response)
     return LoginResponse(status="ok")
+
+
+@app.get("/api/admin/token", response_model=LoginResponse)
+def admin_token(
+    request: Request, db: Session = Depends(get_db)
+) -> LoginResponse:
+    session = _get_admin_session(request, db)
+    if not session:
+        raise HTTPException(status_code=401, detail="admin login required")
+    user = db.query(AdminUser).filter(AdminUser.id == session.admin_user_id).first()
+    if not user or user.disabled_at:
+        raise HTTPException(status_code=401, detail="admin login required")
+    jwt_token = _issue_admin_jwt(session, user)
+    return LoginResponse(
+        status="ok",
+        token=jwt_token,
+        admin_user_id=user.id,
+        username=user.username,
+        expires_at=session.expires_at,
+    )
 
 
 @app.get("/logout")
@@ -531,21 +874,27 @@ def logout_page(request: Request, db: Session = Depends(get_db)) -> RedirectResp
 
 @app.get("/api/keys", response_model=ApiKeyListResponse)
 def list_api_keys(
+    admin_user_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    session: AdminSession = Depends(_require_admin),
+    _: AdminSession = Depends(_require_admin_api),
 ) -> ApiKeyListResponse:
-    keys = (
-        db.query(ApiKey)
-        .filter(ApiKey.admin_user_id == session.admin_user_id)
-        .order_by(ApiKey.created_at.desc())
-        .all()
-    )
+    query = db.query(ApiKey)
+    if admin_user_id is not None:
+        query = query.filter(ApiKey.admin_user_id == admin_user_id)
+    keys = query.order_by(ApiKey.created_at.desc()).all()
+    admin_ids = {key.admin_user_id for key in keys if key.admin_user_id}
+    admin_lookup: Dict[int, str] = {}
+    if admin_ids:
+        users = db.query(AdminUser).filter(AdminUser.id.in_(admin_ids)).all()
+        admin_lookup = {user.id: user.username for user in users}
     items = [
         ApiKeyItem(
             id=key.id,
             name=key.name,
             prefix=key.prefix,
             scope=key.scope or "manage",
+            admin_user_id=key.admin_user_id,
+            admin_username=admin_lookup.get(key.admin_user_id or 0),
             expires_at=key.expires_at,
             created_at=key.created_at,
             last_used_at=key.last_used_at,
@@ -560,20 +909,28 @@ def list_api_keys(
 def create_api_key(
     payload: ApiKeyCreate,
     db: Session = Depends(get_db),
-    session: AdminSession = Depends(_require_admin),
+    session: AdminSession = Depends(_require_admin_api),
 ) -> ApiKeyCreateResponse:
+    owner_id = payload.admin_user_id
+    if owner_id is None:
+        owner_id = session.admin_user_id
+    owner = db.query(AdminUser).filter(AdminUser.id == owner_id).first()
+    if not owner or owner.disabled_at:
+        raise HTTPException(status_code=400, detail="admin user is invalid")
     record, raw_key = _create_api_key_record(
         db,
         name=payload.name,
         scope=payload.scope,
         expires_in_days=payload.expires_in_days,
-        admin_user_id=session.admin_user_id,
+        admin_user_id=owner_id,
     )
     return ApiKeyCreateResponse(
         id=record.id,
         name=record.name,
         prefix=record.prefix,
         scope=record.scope or "manage",
+        admin_user_id=record.admin_user_id,
+        admin_username=owner.username,
         expires_at=record.expires_at,
         api_key=raw_key,
         created_at=record.created_at,
@@ -584,13 +941,9 @@ def create_api_key(
 def revoke_api_key(
     key_id: int,
     db: Session = Depends(get_db),
-    session: AdminSession = Depends(_require_admin),
+    _: AdminSession = Depends(_require_admin_api),
 ) -> ApiKeyItem:
-    record = (
-        db.query(ApiKey)
-        .filter(ApiKey.id == key_id, ApiKey.admin_user_id == session.admin_user_id)
-        .first()
-    )
+    record = db.query(ApiKey).filter(ApiKey.id == key_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="api key not found")
     if record.revoked_at is None:
@@ -598,11 +951,55 @@ def revoke_api_key(
         db.add(record)
         db.commit()
         db.refresh(record)
+    owner_name = None
+    if record.admin_user_id:
+        owner = db.query(AdminUser).filter(AdminUser.id == record.admin_user_id).first()
+        owner_name = owner.username if owner else None
     return ApiKeyItem(
         id=record.id,
         name=record.name,
         prefix=record.prefix,
         scope=record.scope or "manage",
+        admin_user_id=record.admin_user_id,
+        admin_username=owner_name,
+        expires_at=record.expires_at,
+        created_at=record.created_at,
+        last_used_at=record.last_used_at,
+        revoked_at=record.revoked_at,
+    )
+
+
+@app.patch("/api/keys/{key_id}", response_model=ApiKeyItem)
+def update_api_key(
+    key_id: int,
+    payload: ApiKeyUpdate,
+    db: Session = Depends(get_db),
+    _: AdminSession = Depends(_require_admin_api),
+) -> ApiKeyItem:
+    record = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="api key not found")
+    if payload.scope is not None:
+        record.scope = _normalize_scope(payload.scope)
+    if payload.admin_user_id is not None:
+        owner = db.query(AdminUser).filter(AdminUser.id == payload.admin_user_id).first()
+        if not owner or owner.disabled_at:
+            raise HTTPException(status_code=400, detail="admin user is invalid")
+        record.admin_user_id = owner.id
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    owner_name = None
+    if record.admin_user_id:
+        owner = db.query(AdminUser).filter(AdminUser.id == record.admin_user_id).first()
+        owner_name = owner.username if owner else None
+    return ApiKeyItem(
+        id=record.id,
+        name=record.name,
+        prefix=record.prefix,
+        scope=record.scope or "manage",
+        admin_user_id=record.admin_user_id,
+        admin_username=owner_name,
         expires_at=record.expires_at,
         created_at=record.created_at,
         last_used_at=record.last_used_at,
@@ -613,7 +1010,7 @@ def revoke_api_key(
 @app.get("/api/admin/users", response_model=AdminUserListResponse)
 def list_admin_users(
     db: Session = Depends(get_db),
-    _: AdminSession = Depends(_require_admin),
+    _: AdminSession = Depends(_require_admin_api),
 ) -> AdminUserListResponse:
     users = db.query(AdminUser).order_by(AdminUser.created_at.asc()).all()
     items = [
@@ -632,7 +1029,7 @@ def list_admin_users(
 def upsert_admin_user(
     payload: AdminUserCreate,
     db: Session = Depends(get_db),
-    _: AdminSession = Depends(_require_admin),
+    _: AdminSession = Depends(_require_admin_api),
 ) -> AdminUserItem:
     username = payload.username.strip()
     if not username:
@@ -667,7 +1064,7 @@ def upsert_admin_user(
 def disable_admin_user(
     user_id: int,
     db: Session = Depends(get_db),
-    session: AdminSession = Depends(_require_admin),
+    session: AdminSession = Depends(_require_admin_api),
 ) -> AdminUserItem:
     if user_id == session.admin_user_id:
         raise HTTPException(status_code=400, detail="cannot disable current user")
@@ -692,7 +1089,7 @@ def disable_admin_user(
 def enable_admin_user(
     user_id: int,
     db: Session = Depends(get_db),
-    _: AdminSession = Depends(_require_admin),
+    _: AdminSession = Depends(_require_admin_api),
 ) -> AdminUserItem:
     user = db.query(AdminUser).filter(AdminUser.id == user_id).first()
     if not user:
@@ -709,10 +1106,44 @@ def enable_admin_user(
     )
 
 
+@app.delete("/api/admin/users/{user_id}", response_model=AdminUserItem)
+def delete_admin_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    session: AdminSession = Depends(_require_admin_api),
+) -> AdminUserItem:
+    if user_id == session.admin_user_id:
+        raise HTTPException(status_code=400, detail="cannot delete current user")
+    user = db.query(AdminUser).filter(AdminUser.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="user not found")
+    now = datetime.utcnow()
+    db.query(ApiKey).filter(
+        ApiKey.admin_user_id == user.id, ApiKey.revoked_at.is_(None)
+    ).update({"revoked_at": now}, synchronize_session=False)
+    db.query(AdminSession).filter(AdminSession.admin_user_id == user.id).delete()
+    item = AdminUserItem(
+        id=user.id,
+        username=user.username,
+        created_at=user.created_at,
+        disabled_at=user.disabled_at,
+    )
+    db.delete(user)
+    db.commit()
+    return item
+
+
 def _normalize_whatsapp_sender(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
         raise HTTPException(status_code=400, detail="from_address is required")
+    return normalize_whatsapp(cleaned)
+
+
+def _normalize_whatsapp_address(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="address is required")
     return normalize_whatsapp(cleaned)
 
 
@@ -721,6 +1152,223 @@ def _normalize_email_sender(value: str) -> str:
     if not cleaned:
         raise HTTPException(status_code=400, detail="from_email is required")
     return cleaned.lower()
+
+
+def _normalize_sms_phone(value: str) -> str:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="phone is required")
+    cleaned = cleaned.replace("whatsapp:", "").strip()
+    if cleaned.startswith("+"):
+        digits = re.sub(r"\D", "", cleaned)
+        if not digits:
+            raise HTTPException(status_code=400, detail="phone is invalid")
+        return f"+{digits}"
+    digits = re.sub(r"\D", "", cleaned)
+    if not digits:
+        raise HTTPException(status_code=400, detail="phone is invalid")
+    default_cc = (settings.sms_default_country_code or "").lstrip("+")
+    if default_cc:
+        if digits.startswith(default_cc):
+            return f"+{digits}"
+        return f"+{default_cc}{digits}"
+    return f"+{digits}"
+
+
+def _normalize_sms_phones(values: List[str]) -> List[str]:
+    seen = set()
+    result = []
+    for value in values:
+        normalized = _normalize_sms_phone(value)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def _serialize_json_list(values: Optional[List[Any]]) -> Optional[str]:
+    if not values:
+        return None
+    cleaned = [value for value in values if value not in (None, "")]
+    if not cleaned:
+        return None
+    return json.dumps(cleaned, ensure_ascii=True)
+
+
+def _serialize_json_dict(values: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not values:
+        return None
+    cleaned = {str(k): v for k, v in values.items() if k not in (None, "")}
+    if not cleaned:
+        return None
+    return json.dumps(cleaned, ensure_ascii=True)
+
+
+def _deserialize_json_list(value: Optional[str]) -> List[Any]:
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _deserialize_json_dict(value: Optional[str]) -> Dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def _serialize_tags(tags: Optional[List[str]]) -> Optional[str]:
+    if not tags:
+        return None
+    cleaned = sorted({tag.strip() for tag in tags if tag and tag.strip()})
+    if not cleaned:
+        return None
+    return json.dumps(cleaned, ensure_ascii=True)
+
+
+def _deserialize_tags(value: Optional[str]) -> List[str]:
+    if not value:
+        return []
+    items = _deserialize_json_list(value)
+    if items:
+        return [str(item).strip() for item in items if str(item).strip()]
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+class _SafeFormatDict(dict):
+    def __missing__(self, key: str) -> str:
+        return f"{{{key}}}"
+
+
+def _render_sms_body(template: str, variables: Optional[Dict[str, Any]]) -> str:
+    if not variables:
+        return template
+    safe_vars = {str(key): str(value) for key, value in variables.items()}
+    return template.format_map(_SafeFormatDict(safe_vars))
+
+
+def _append_opt_out_text(body: str, append_opt_out: bool) -> str:
+    if not append_opt_out:
+        return body
+    if not settings.sms_append_opt_out:
+        return body
+    suffix = (settings.sms_opt_out_text or "").strip()
+    if not suffix:
+        return body
+    if suffix in body:
+        return body
+    return f"{body}\n{suffix}".strip()
+
+
+def _build_sms_status_callback(message_id: int) -> Optional[str]:
+    if not settings.public_base_url:
+        return None
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/webhooks/twilio/sms/status?local_id={message_id}"
+
+
+def _is_opted_out(db: Session, phone: str) -> Optional[str]:
+    if db.query(SmsBlacklist).filter(SmsBlacklist.phone == phone).first():
+        return "blacklist"
+    if db.query(SmsOptOut).filter(SmsOptOut.phone == phone).first():
+        return "opt_out"
+    return None
+
+
+def _match_keyword(rule: SmsKeywordRule, text: str) -> bool:
+    keyword = (rule.keyword or "").strip()
+    if not keyword:
+        return False
+    text_value = text.strip()
+    match_type = (rule.match_type or "contains").lower()
+    if match_type == "exact":
+        return text_value.lower() == keyword.lower()
+    if match_type == "regex":
+        try:
+            return re.search(keyword, text_value, re.IGNORECASE) is not None
+        except re.error:
+            return False
+    return keyword.lower() in text_value.lower()
+
+
+def _collect_sms_recipients(
+    db: Session,
+    recipients: Optional[List[str]] = None,
+    group_ids: Optional[List[int]] = None,
+    tags: Optional[List[str]] = None,
+) -> Tuple[List[str], Dict[str, SmsContact]]:
+    phones: List[str] = []
+    contact_map: Dict[str, SmsContact] = {}
+    if recipients:
+        for phone in _normalize_sms_phones(recipients):
+            phones.append(phone)
+    if group_ids:
+        members = (
+            db.query(SmsContact)
+            .join(SmsGroupMember, SmsGroupMember.contact_id == SmsContact.id)
+            .filter(SmsGroupMember.group_id.in_(group_ids), SmsContact.disabled_at.is_(None))
+            .all()
+        )
+        for contact in members:
+            phones.append(contact.phone)
+            contact_map[contact.phone] = contact
+    if tags:
+        tag_set = {tag.strip().lower() for tag in tags if tag and tag.strip()}
+        if tag_set:
+            contacts = db.query(SmsContact).filter(SmsContact.disabled_at.is_(None)).all()
+            for contact in contacts:
+                contact_tags = {tag.lower() for tag in _deserialize_tags(contact.tags)}
+                if contact_tags.intersection(tag_set):
+                    phones.append(contact.phone)
+                    contact_map[contact.phone] = contact
+    unique = []
+    seen = set()
+    for phone in phones:
+        normalized = _normalize_sms_phone(phone)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique, contact_map
+
+def _get_form_value(form: Any, key: str) -> Optional[str]:
+    value = form.get(key)
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _extract_first_email(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    addresses = getaddresses([value])
+    for _, address in addresses:
+        cleaned = address.strip()
+        if cleaned:
+            return cleaned.lower()
+    cleaned = value.strip()
+    return cleaned.lower() if cleaned else None
+
+
+def _extract_sendgrid_message_id(headers: Optional[str]) -> Optional[str]:
+    if not headers:
+        return None
+    for line in headers.splitlines():
+        if line.lower().startswith("message-id:"):
+            return line.split(":", 1)[1].strip().strip("<>")
+    return None
 
 
 def _list_email_senders(db: Session) -> List[EmailSenderItem]:
@@ -768,6 +1416,292 @@ def _list_whatsapp_senders(db: Session) -> List[str]:
         if sender.from_address:
             senders.add(normalize_whatsapp(sender.from_address))
     return sorted(senders)
+
+
+def _resolve_sms_template(db: Session, template_id: Optional[int]) -> Optional[SmsTemplate]:
+    if not template_id:
+        return None
+    template = db.query(SmsTemplate).filter(SmsTemplate.id == template_id).first()
+    if not template or template.disabled_at:
+        raise HTTPException(status_code=404, detail="sms template not found")
+    return template
+
+
+def _build_sms_variables(
+    base_variables: Optional[Dict[str, str]], contact: Optional[SmsContact]
+) -> Dict[str, str]:
+    variables: Dict[str, str] = {}
+    if base_variables:
+        variables.update({str(k): str(v) for k, v in base_variables.items()})
+    if contact:
+        if contact.name:
+            variables.setdefault("name", contact.name)
+        variables.setdefault("phone", contact.phone)
+    return variables
+
+
+def _create_sms_message_record(
+    db: Session,
+    *,
+    batch_id: str,
+    to_address: str,
+    from_address: str,
+    body: str,
+    status: str,
+    campaign_id: Optional[int] = None,
+    template_id: Optional[int] = None,
+    variant: Optional[str] = None,
+    direction: str = "outbound",
+    provider_message_id: Optional[str] = None,
+    error: Optional[str] = None,
+) -> Message:
+    now = datetime.utcnow()
+    message = Message(
+        batch_id=batch_id,
+        channel="sms",
+        to_address=to_address,
+        from_address=from_address,
+        subject=None,
+        body=body,
+        status=status,
+        provider_message_id=provider_message_id,
+        campaign_id=campaign_id,
+        template_id=template_id,
+        variant=variant,
+        direction=direction,
+        error=error,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(message)
+    db.commit()
+    db.refresh(message)
+    return message
+
+
+def _send_sms_outbound(
+    db: Session,
+    *,
+    twilio: TwilioService,
+    recipient: str,
+    body: str,
+    batch_id: str,
+    from_number: Optional[str],
+    messaging_service_sid: Optional[str],
+    campaign_id: Optional[int],
+    template_id: Optional[int],
+    variant: Optional[str],
+    append_opt_out: bool,
+    use_proxy: Optional[bool],
+) -> SendResult:
+    opt_out_reason = _is_opted_out(db, recipient)
+    if opt_out_reason:
+        message = _create_sms_message_record(
+            db,
+            batch_id=batch_id,
+            to_address=recipient,
+            from_address=from_number or (messaging_service_sid or ""),
+            body=body,
+            status="blocked",
+            campaign_id=campaign_id,
+            template_id=template_id,
+            variant=variant,
+            error=opt_out_reason,
+        )
+        return SendResult(
+            message_id=message.id,
+            recipient=recipient,
+            status=message.status,
+            provider_message_id=message.provider_message_id,
+            error=message.error,
+        )
+
+    body_value = _append_opt_out_text(body, append_opt_out)
+    message = _create_sms_message_record(
+        db,
+        batch_id=batch_id,
+        to_address=recipient,
+        from_address=from_number or (messaging_service_sid or ""),
+        body=body_value,
+        status="queued",
+        campaign_id=campaign_id,
+        template_id=template_id,
+        variant=variant,
+    )
+
+    status_callback = _build_sms_status_callback(message.id)
+    try:
+        sid = twilio.send_sms(
+            to_number=recipient,
+            body=body_value,
+            status_callback=status_callback,
+            from_number=from_number,
+            messaging_service_sid=messaging_service_sid,
+            use_proxy=use_proxy,
+        )
+        message.provider_message_id = sid
+    except Exception as exc:  # pragma: no cover - external API
+        message.status = "failed"
+        message.error = str(exc)
+
+    message.updated_at = datetime.utcnow()
+    db.add(message)
+    db.commit()
+
+    return SendResult(
+        message_id=message.id,
+        recipient=recipient,
+        status=message.status,
+        provider_message_id=message.provider_message_id,
+        error=message.error,
+    )
+
+
+def _sms_rate_delay(rate_per_minute: Optional[int]) -> float:
+    if not rate_per_minute or rate_per_minute <= 0:
+        return 0.0
+    return max(0.0, 60.0 / float(rate_per_minute))
+
+
+def _dispatch_sms_campaign(db: Session, campaign: SmsCampaign) -> None:
+    if campaign.status not in {"scheduled", "running"}:
+        return
+    twilio = _ensure_twilio()
+    rate_per_minute = campaign.rate_per_minute or settings.sms_default_rate_per_minute
+    delay_seconds = _sms_rate_delay(rate_per_minute)
+    batch_id = f"sms_campaign_{campaign.id}_{uuid4().hex}"
+
+    recipients = _deserialize_json_list(campaign.target_recipients)
+    group_ids = _deserialize_json_list(campaign.target_groups)
+    tags = _deserialize_json_list(campaign.target_tags)
+    phones, contact_map = _collect_sms_recipients(
+        db,
+        recipients=recipients,
+        group_ids=[int(value) for value in group_ids if str(value).isdigit()],
+        tags=[str(value) for value in tags],
+    )
+
+    template = _resolve_sms_template(db, campaign.template_id)
+    if not template and not campaign.message and not campaign.variant_a and not campaign.variant_b:
+        campaign.status = "failed"
+        campaign.updated_at = datetime.utcnow()
+        db.add(campaign)
+        db.commit()
+        return
+
+    for index, recipient in enumerate(phones):
+        db.refresh(campaign)
+        if campaign.status in {"paused", "canceled"}:
+            break
+
+        contact = contact_map.get(recipient)
+        variant = None
+        body_source = campaign.message or (template.body if template else "")
+        if campaign.variant_a and campaign.variant_b:
+            split = max(0, min(100, campaign.ab_split or 50))
+            variant = "A" if random.randint(1, 100) <= split else "B"
+            body_source = campaign.variant_a if variant == "A" else campaign.variant_b
+
+        variables = _build_sms_variables(
+            _deserialize_json_dict(campaign.template_variables),
+            contact,
+        )
+        body = _render_sms_body(body_source, variables)
+
+        _send_sms_outbound(
+            db,
+            twilio=twilio,
+            recipient=recipient,
+            body=body,
+            batch_id=batch_id,
+            from_number=campaign.from_number,
+            messaging_service_sid=campaign.messaging_service_sid,
+            campaign_id=campaign.id,
+            template_id=campaign.template_id,
+            variant=variant,
+            append_opt_out=campaign.append_opt_out,
+            use_proxy=None,
+        )
+
+        if delay_seconds:
+            time.sleep(delay_seconds)
+
+    campaign.status = "completed"
+    campaign.completed_at = datetime.utcnow()
+    campaign.updated_at = datetime.utcnow()
+    db.add(campaign)
+    db.commit()
+
+
+def _sms_stats_from_query(query) -> SmsStatsResponse:
+    counts = dict(
+        query.with_entities(Message.status, func.count(Message.id))
+        .group_by(Message.status)
+        .all()
+    )
+    total = sum(counts.values())
+    cost = query.with_entities(func.sum(Message.price)).scalar()
+    price_unit = (
+        query.with_entities(Message.price_unit)
+        .filter(Message.price_unit.isnot(None))
+        .first()
+    )
+    price_unit_value = price_unit[0] if price_unit else None
+    return SmsStatsResponse(
+        total=total,
+        delivered=counts.get("delivered", 0),
+        failed=counts.get("failed", 0),
+        undelivered=counts.get("undelivered", 0),
+        queued=counts.get("queued", 0),
+        sent=counts.get("sent", 0),
+        received=counts.get("received", 0),
+        blocked=counts.get("blocked", 0),
+        cost=float(cost) if cost is not None else None,
+        price_unit=price_unit_value,
+    )
+
+
+def _sms_scheduler_loop() -> None:
+    while settings.sms_scheduler_enabled:
+        try:
+            now = datetime.utcnow()
+            with SessionLocal() as db:
+                due_campaigns = (
+                    db.query(SmsCampaign)
+                    .filter(
+                        SmsCampaign.status == "scheduled",
+                        (SmsCampaign.schedule_at.is_(None))
+                        | (SmsCampaign.schedule_at <= now),
+                    )
+                    .all()
+                )
+                for campaign in due_campaigns:
+                    campaign.status = "running"
+                    campaign.started_at = now
+                    campaign.updated_at = now
+                    db.add(campaign)
+                    db.commit()
+                    _dispatch_sms_campaign(db, campaign)
+        except Exception:  # pragma: no cover - scheduler safety
+            pass
+        time.sleep(max(1, settings.sms_scheduler_interval_seconds))
+
+
+def _start_sms_scheduler() -> None:
+    global _sms_scheduler_started
+    if _sms_scheduler_started:
+        return
+    if not settings.sms_scheduler_enabled:
+        return
+    _sms_scheduler_started = True
+    thread = threading.Thread(target=_sms_scheduler_loop, daemon=True)
+    thread.start()
+
+def _user_address_expr() -> Any:
+    return case(
+        (Message.direction == "inbound", Message.from_address),
+        else_=Message.to_address,
+    )
 
 
 def _extract_page_token(url: Optional[str]) -> Optional[str]:
@@ -943,6 +1877,7 @@ def send_email(
             subject=request.subject,
             body=request.html or request.text,
             status="queued",
+            direction="outbound",
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
@@ -1150,6 +2085,7 @@ def send_whatsapp(
         )
 
     for recipient in request.recipients:
+        normalized_recipient = _normalize_whatsapp_address(recipient)
         stored_body = request.body
         if request.content_sid:
             stored_body = (
@@ -1159,11 +2095,12 @@ def send_whatsapp(
         message = Message(
             batch_id=batch_id,
             channel="whatsapp",
-            to_address=recipient,
+            to_address=normalized_recipient,
             from_address=selected_from,
             subject=None,
             body=stored_body,
             status="queued",
+            direction="outbound",
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )
@@ -1180,7 +2117,7 @@ def send_whatsapp(
 
         try:
             message_sid = twilio.send_whatsapp(
-                to_number=recipient,
+                to_number=normalized_recipient,
                 body=request.body if not request.content_sid else None,
                 media_urls=request.media_urls if not request.content_sid else None,
                 status_callback=status_callback,
@@ -1209,6 +2146,1021 @@ def send_whatsapp(
         )
 
     return SendResponse(batch_id=batch_id, channel="whatsapp", results=results)
+
+
+@app.get("/api/sms/templates", response_model=SmsTemplateListResponse)
+def list_sms_templates(
+    include_disabled: bool = False,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsTemplateListResponse:
+    query = db.query(SmsTemplate)
+    if not include_disabled:
+        query = query.filter(SmsTemplate.disabled_at.is_(None))
+    templates = query.order_by(SmsTemplate.created_at.desc()).all()
+    return SmsTemplateListResponse(templates=[_sms_template_to_item(item) for item in templates])
+
+
+@app.post("/api/sms/templates", response_model=SmsTemplateItem)
+def create_sms_template(
+    payload: SmsTemplateCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsTemplateItem:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    existing = db.query(SmsTemplate).filter(SmsTemplate.name == name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="template name already exists")
+    template = SmsTemplate(
+        name=name,
+        body=payload.body,
+        variables=_serialize_json_list(payload.variables),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return _sms_template_to_item(template)
+
+
+@app.patch("/api/sms/templates/{template_id}", response_model=SmsTemplateItem)
+def update_sms_template(
+    template_id: int,
+    payload: SmsTemplateUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsTemplateItem:
+    template = db.query(SmsTemplate).filter(SmsTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="sms template not found")
+    if payload.name is not None:
+        name_value = payload.name.strip()
+        if not name_value:
+            raise HTTPException(status_code=400, detail="name is required")
+        template.name = name_value
+    if payload.body is not None:
+        if not payload.body.strip():
+            raise HTTPException(status_code=400, detail="body is required")
+        template.body = payload.body
+    if payload.variables is not None:
+        template.variables = _serialize_json_list(payload.variables)
+    if payload.disabled is not None:
+        template.disabled_at = datetime.utcnow() if payload.disabled else None
+    template.updated_at = datetime.utcnow()
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return _sms_template_to_item(template)
+
+
+@app.delete("/api/sms/templates/{template_id}", response_model=SmsTemplateItem)
+def disable_sms_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsTemplateItem:
+    template = db.query(SmsTemplate).filter(SmsTemplate.id == template_id).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="sms template not found")
+    template.disabled_at = datetime.utcnow()
+    template.updated_at = datetime.utcnow()
+    db.add(template)
+    db.commit()
+    db.refresh(template)
+    return _sms_template_to_item(template)
+
+
+@app.get("/api/sms/contacts", response_model=SmsContactListResponse)
+def list_sms_contacts(
+    search: Optional[str] = None,
+    tag: Optional[str] = None,
+    include_disabled: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsContactListResponse:
+    query = db.query(SmsContact)
+    if not include_disabled:
+        query = query.filter(SmsContact.disabled_at.is_(None))
+    if search:
+        search_value = f"%{search.strip()}%"
+        query = query.filter(
+            (SmsContact.phone.like(search_value)) | (SmsContact.name.like(search_value))
+        )
+    contacts = query.order_by(SmsContact.created_at.desc()).all()
+    if tag:
+        tag_value = tag.strip().lower()
+        if tag_value:
+            contacts = [
+                contact
+                for contact in contacts
+                if tag_value in {item.lower() for item in _deserialize_tags(contact.tags)}
+            ]
+    total = len(contacts)
+    paginated = contacts[offset : offset + limit]
+    return SmsContactListResponse(
+        contacts=[_sms_contact_to_item(item) for item in paginated],
+        total=total,
+    )
+
+
+@app.post("/api/sms/contacts", response_model=SmsContactItem)
+def create_sms_contact(
+    payload: SmsContactCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsContactItem:
+    phone = _normalize_sms_phone(payload.phone)
+    existing = db.query(SmsContact).filter(SmsContact.phone == phone).first()
+    if existing:
+        if payload.name is not None:
+            existing.name = payload.name.strip() or None
+        if payload.tags is not None:
+            existing.tags = _serialize_tags(payload.tags)
+        existing.disabled_at = None
+        existing.updated_at = datetime.utcnow()
+        db.add(existing)
+        db.commit()
+        db.refresh(existing)
+        return _sms_contact_to_item(existing)
+    contact = SmsContact(
+        phone=phone,
+        name=payload.name.strip() if payload.name else None,
+        tags=_serialize_tags(payload.tags),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return _sms_contact_to_item(contact)
+
+
+@app.patch("/api/sms/contacts/{contact_id}", response_model=SmsContactItem)
+def update_sms_contact(
+    contact_id: int,
+    payload: SmsContactUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsContactItem:
+    contact = db.query(SmsContact).filter(SmsContact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+    if payload.name is not None:
+        contact.name = payload.name.strip() or None
+    if payload.tags is not None:
+        contact.tags = _serialize_tags(payload.tags)
+    if payload.disabled is not None:
+        contact.disabled_at = datetime.utcnow() if payload.disabled else None
+    contact.updated_at = datetime.utcnow()
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return _sms_contact_to_item(contact)
+
+
+@app.delete("/api/sms/contacts/{contact_id}", response_model=SmsContactItem)
+def disable_sms_contact(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsContactItem:
+    contact = db.query(SmsContact).filter(SmsContact.id == contact_id).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="contact not found")
+    contact.disabled_at = datetime.utcnow()
+    contact.updated_at = datetime.utcnow()
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return _sms_contact_to_item(contact)
+
+
+@app.post("/api/sms/contacts/import")
+async def import_sms_contacts(
+    file: UploadFile = File(...),
+    group_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> JSONResponse:
+    raw = await file.read()
+    content = raw.decode("utf-8-sig", errors="replace")
+    stream = io.StringIO(content)
+    reader = csv.reader(stream)
+    rows = list(reader)
+    if not rows:
+        return JSONResponse({"added": 0, "updated": 0, "skipped": 0})
+
+    header = [cell.strip().lower() for cell in rows[0]]
+    use_header = "phone" in header
+    data_rows = rows[1:] if use_header else rows
+    added = 0
+    updated = 0
+    skipped = 0
+
+    def ensure_contact(phone_value: str, name_value: Optional[str], tags_value: Optional[str]) -> Optional[SmsContact]:
+        nonlocal added, updated, skipped
+        if not phone_value:
+            skipped += 1
+            return None
+        try:
+            normalized = _normalize_sms_phone(phone_value)
+        except HTTPException:
+            skipped += 1
+            return None
+        tags_list = (
+            [tag.strip() for tag in tags_value.split(",") if tag.strip()]
+            if tags_value
+            else None
+        )
+        existing = db.query(SmsContact).filter(SmsContact.phone == normalized).first()
+        if existing:
+            if name_value:
+                existing.name = name_value.strip() or None
+            if tags_list is not None:
+                existing.tags = _serialize_tags(tags_list)
+            existing.disabled_at = None
+            existing.updated_at = datetime.utcnow()
+            db.add(existing)
+            updated += 1
+            return existing
+        contact = SmsContact(
+            phone=normalized,
+            name=name_value.strip() if name_value else None,
+            tags=_serialize_tags(tags_list),
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(contact)
+        db.flush()
+        added += 1
+        return contact
+
+    for row in data_rows:
+        if not row:
+            continue
+        phone_value = ""
+        name_value = None
+        tags_value = None
+        if use_header:
+            data = {header[idx]: (row[idx] if idx < len(row) else "") for idx in range(len(header))}
+            phone_value = data.get("phone", "") or data.get("手机号", "")
+            name_value = data.get("name", "") or data.get("姓名", "")
+            tags_value = data.get("tags", "") or data.get("标签", "")
+        else:
+            phone_value = row[0] if len(row) > 0 else ""
+            name_value = row[1] if len(row) > 1 else None
+            tags_value = row[2] if len(row) > 2 else None
+        contact = ensure_contact(phone_value, name_value, tags_value)
+        if contact and group_id:
+            existing = (
+                db.query(SmsGroupMember)
+                .filter(SmsGroupMember.group_id == group_id, SmsGroupMember.contact_id == contact.id)
+                .first()
+            )
+            if not existing:
+                db.add(
+                    SmsGroupMember(
+                        group_id=group_id,
+                        contact_id=contact.id,
+                        created_at=datetime.utcnow(),
+                    )
+                )
+
+    db.commit()
+    return JSONResponse({"added": added, "updated": updated, "skipped": skipped})
+
+
+@app.get("/api/sms/contacts/export")
+def export_sms_contacts(
+    include_disabled: bool = False,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> StreamingResponse:
+    query = db.query(SmsContact)
+    if not include_disabled:
+        query = query.filter(SmsContact.disabled_at.is_(None))
+    contacts = query.order_by(SmsContact.created_at.desc()).all()
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["phone", "name", "tags"])
+    for contact in contacts:
+        tags_text = ",".join(_deserialize_tags(contact.tags))
+        writer.writerow([contact.phone, contact.name or "", tags_text])
+    output.seek(0)
+    headers = {"Content-Disposition": "attachment; filename=sms_contacts.csv"}
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers=headers)
+
+
+@app.get("/api/sms/groups", response_model=SmsGroupListResponse)
+def list_sms_groups(
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsGroupListResponse:
+    groups = db.query(SmsGroup).order_by(SmsGroup.created_at.desc()).all()
+    counts = dict(
+        db.query(SmsGroupMember.group_id, func.count(SmsGroupMember.id))
+        .group_by(SmsGroupMember.group_id)
+        .all()
+    )
+    return SmsGroupListResponse(
+        groups=[_sms_group_to_item(group, counts.get(group.id, 0)) for group in groups]
+    )
+
+
+@app.post("/api/sms/groups", response_model=SmsGroupItem)
+def create_sms_group(
+    payload: SmsGroupCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsGroupItem:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    existing = db.query(SmsGroup).filter(SmsGroup.name == name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="group name already exists")
+    group = SmsGroup(
+        name=name,
+        description=payload.description,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return _sms_group_to_item(group, 0)
+
+
+@app.patch("/api/sms/groups/{group_id}", response_model=SmsGroupItem)
+def update_sms_group(
+    group_id: int,
+    payload: SmsGroupUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsGroupItem:
+    group = db.query(SmsGroup).filter(SmsGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    if payload.name is not None:
+        name_value = payload.name.strip()
+        if not name_value:
+            raise HTTPException(status_code=400, detail="name is required")
+        group.name = name_value
+    if payload.description is not None:
+        group.description = payload.description
+    group.updated_at = datetime.utcnow()
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    member_count = (
+        db.query(SmsGroupMember).filter(SmsGroupMember.group_id == group_id).count()
+    )
+    return _sms_group_to_item(group, member_count)
+
+
+@app.delete("/api/sms/groups/{group_id}", response_model=SmsGroupItem)
+def delete_sms_group(
+    group_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsGroupItem:
+    group = db.query(SmsGroup).filter(SmsGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    member_count = (
+        db.query(SmsGroupMember).filter(SmsGroupMember.group_id == group_id).count()
+    )
+    db.query(SmsGroupMember).filter(SmsGroupMember.group_id == group_id).delete()
+    db.delete(group)
+    db.commit()
+    return _sms_group_to_item(group, member_count)
+
+
+@app.get("/api/sms/groups/{group_id}/members", response_model=SmsGroupMembersResponse)
+def list_sms_group_members(
+    group_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsGroupMembersResponse:
+    group = db.query(SmsGroup).filter(SmsGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    members = (
+        db.query(SmsContact)
+        .join(SmsGroupMember, SmsGroupMember.contact_id == SmsContact.id)
+        .filter(SmsGroupMember.group_id == group_id, SmsContact.disabled_at.is_(None))
+        .all()
+    )
+    return SmsGroupMembersResponse(
+        group_id=group_id,
+        members=[_sms_contact_to_item(item) for item in members],
+    )
+
+
+@app.post("/api/sms/groups/{group_id}/members", response_model=SmsGroupMembersResponse)
+def add_sms_group_members(
+    group_id: int,
+    payload: SmsGroupMembersRequest,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsGroupMembersResponse:
+    group = db.query(SmsGroup).filter(SmsGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    contact_ids = payload.contact_ids or []
+    phones = payload.phones or []
+    contacts: List[SmsContact] = []
+
+    if contact_ids:
+        contacts.extend(
+            db.query(SmsContact)
+            .filter(SmsContact.id.in_(contact_ids))
+            .all()
+        )
+    for phone_value in phones:
+        normalized = _normalize_sms_phone(phone_value)
+        contact = db.query(SmsContact).filter(SmsContact.phone == normalized).first()
+        if not contact:
+            contact = SmsContact(
+                phone=normalized,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+            db.add(contact)
+            db.commit()
+            db.refresh(contact)
+        contacts.append(contact)
+
+    for contact in contacts:
+        existing = (
+            db.query(SmsGroupMember)
+            .filter(SmsGroupMember.group_id == group_id, SmsGroupMember.contact_id == contact.id)
+            .first()
+        )
+        if not existing:
+            db.add(
+                SmsGroupMember(
+                    group_id=group_id,
+                    contact_id=contact.id,
+                    created_at=datetime.utcnow(),
+                )
+            )
+    db.commit()
+    return list_sms_group_members(group_id, db)
+
+
+@app.delete("/api/sms/groups/{group_id}/members", response_model=SmsGroupMembersResponse)
+def remove_sms_group_members(
+    group_id: int,
+    payload: SmsGroupMembersRequest,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsGroupMembersResponse:
+    contact_ids = payload.contact_ids or []
+    phones = payload.phones or []
+    if phones:
+        normalized = _normalize_sms_phones(phones)
+        phone_contacts = (
+            db.query(SmsContact.id)
+            .filter(SmsContact.phone.in_(normalized))
+            .all()
+        )
+        contact_ids.extend([item[0] for item in phone_contacts])
+    if contact_ids:
+        db.query(SmsGroupMember).filter(
+            SmsGroupMember.group_id == group_id,
+            SmsGroupMember.contact_id.in_(contact_ids),
+        ).delete(synchronize_session=False)
+        db.commit()
+    return list_sms_group_members(group_id, db)
+
+
+@app.post("/api/send/sms", response_model=SendResponse)
+def send_sms(
+    payload: SmsSendRequest,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SendResponse:
+    if not payload.message and not payload.template_id:
+        raise HTTPException(status_code=400, detail="message or template_id is required")
+    template = _resolve_sms_template(db, payload.template_id)
+    body_source = payload.message or (template.body if template else "")
+    if not body_source:
+        raise HTTPException(status_code=400, detail="message body is required")
+    from_number = payload.from_number or settings.twilio_sms_from
+    messaging_service_sid = payload.messaging_service_sid or settings.twilio_sms_messaging_service_sid
+    if not from_number and not messaging_service_sid:
+        raise HTTPException(status_code=400, detail="TWILIO_SMS_FROM is not configured")
+
+    append_opt_out = payload.append_opt_out if payload.append_opt_out is not None else True
+    rate_per_minute = payload.rate_per_minute or settings.sms_default_rate_per_minute
+    delay_seconds = _sms_rate_delay(rate_per_minute)
+
+    twilio = _ensure_twilio()
+    batch_id = uuid4().hex
+    results: List[SendResult] = []
+    variables = _build_sms_variables(payload.template_variables or {}, None)
+
+    for recipient in _normalize_sms_phones(payload.recipients):
+        body = _render_sms_body(body_source, variables)
+        results.append(
+            _send_sms_outbound(
+                db,
+                twilio=twilio,
+                recipient=recipient,
+                body=body,
+                batch_id=batch_id,
+                from_number=from_number,
+                messaging_service_sid=messaging_service_sid,
+                campaign_id=None,
+                template_id=payload.template_id,
+                variant=None,
+                append_opt_out=append_opt_out,
+                use_proxy=None,
+            )
+        )
+        if delay_seconds:
+            time.sleep(delay_seconds)
+
+    return SendResponse(batch_id=batch_id, channel="sms", results=results)
+
+
+@app.get("/api/sms/campaigns", response_model=SmsCampaignListResponse)
+def list_sms_campaigns(
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsCampaignListResponse:
+    query = db.query(SmsCampaign)
+    if status:
+        query = query.filter(SmsCampaign.status == status)
+    campaigns = query.order_by(SmsCampaign.created_at.desc()).all()
+    return SmsCampaignListResponse(campaigns=[_sms_campaign_to_item(item) for item in campaigns])
+
+
+@app.post("/api/sms/campaigns", response_model=SmsCampaignItem)
+def create_sms_campaign(
+    payload: SmsCampaignCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SmsCampaignItem:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if not payload.message and not payload.template_id and not (
+        payload.variant_a and payload.variant_b
+    ):
+        raise HTTPException(status_code=400, detail="message, template, or variants are required")
+    _resolve_sms_template(db, payload.template_id)
+    campaign = SmsCampaign(
+        name=name,
+        message=payload.message,
+        template_id=payload.template_id,
+        template_variables=_serialize_json_dict(payload.template_variables),
+        variant_a=payload.variant_a,
+        variant_b=payload.variant_b,
+        ab_split=payload.ab_split or 50,
+        status="scheduled" if payload.schedule_at else "draft",
+        schedule_at=payload.schedule_at,
+        from_number=payload.from_number,
+        messaging_service_sid=payload.messaging_service_sid,
+        rate_per_minute=payload.rate_per_minute or settings.sms_default_rate_per_minute,
+        batch_size=payload.batch_size or settings.sms_default_batch_size,
+        append_opt_out=payload.append_opt_out if payload.append_opt_out is not None else True,
+        target_groups=_serialize_json_list(payload.group_ids),
+        target_tags=_serialize_json_list(payload.tags),
+        target_recipients=_serialize_json_list(
+            _normalize_sms_phones(payload.recipients) if payload.recipients else []
+        ),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return _sms_campaign_to_item(campaign)
+
+
+@app.patch("/api/sms/campaigns/{campaign_id}", response_model=SmsCampaignItem)
+def update_sms_campaign(
+    campaign_id: int,
+    payload: SmsCampaignUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SmsCampaignItem:
+    campaign = db.query(SmsCampaign).filter(SmsCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if campaign.status not in {"draft", "scheduled", "paused"}:
+        raise HTTPException(status_code=400, detail="campaign cannot be modified")
+    if payload.name is not None:
+        campaign.name = payload.name.strip() or campaign.name
+    if payload.message is not None:
+        campaign.message = payload.message
+    if payload.template_id is not None:
+        _resolve_sms_template(db, payload.template_id)
+        campaign.template_id = payload.template_id
+    if payload.template_variables is not None:
+        campaign.template_variables = _serialize_json_dict(payload.template_variables)
+    if payload.variant_a is not None:
+        campaign.variant_a = payload.variant_a
+    if payload.variant_b is not None:
+        campaign.variant_b = payload.variant_b
+    if payload.ab_split is not None:
+        campaign.ab_split = payload.ab_split
+    if payload.schedule_at is not None:
+        campaign.schedule_at = payload.schedule_at
+    if payload.from_number is not None:
+        campaign.from_number = payload.from_number
+    if payload.messaging_service_sid is not None:
+        campaign.messaging_service_sid = payload.messaging_service_sid
+    if payload.rate_per_minute is not None:
+        campaign.rate_per_minute = payload.rate_per_minute
+    if payload.batch_size is not None:
+        campaign.batch_size = payload.batch_size
+    if payload.append_opt_out is not None:
+        campaign.append_opt_out = payload.append_opt_out
+    if payload.group_ids is not None:
+        campaign.target_groups = _serialize_json_list(payload.group_ids)
+    if payload.tags is not None:
+        campaign.target_tags = _serialize_json_list(payload.tags)
+    if payload.recipients is not None:
+        campaign.target_recipients = _serialize_json_list(
+            _normalize_sms_phones(payload.recipients)
+        )
+    if payload.status is not None:
+        campaign.status = payload.status
+    campaign.updated_at = datetime.utcnow()
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return _sms_campaign_to_item(campaign)
+
+
+@app.post("/api/sms/campaigns/{campaign_id}/schedule", response_model=SmsCampaignItem)
+def schedule_sms_campaign(
+    campaign_id: int,
+    payload: SmsCampaignUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SmsCampaignItem:
+    campaign = db.query(SmsCampaign).filter(SmsCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if not payload.schedule_at:
+        raise HTTPException(status_code=400, detail="schedule_at is required")
+    campaign.schedule_at = payload.schedule_at
+    campaign.status = "scheduled"
+    campaign.updated_at = datetime.utcnow()
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return _sms_campaign_to_item(campaign)
+
+
+@app.post("/api/sms/campaigns/{campaign_id}/start", response_model=SmsCampaignItem)
+def start_sms_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SmsCampaignItem:
+    campaign = db.query(SmsCampaign).filter(SmsCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    campaign.status = "scheduled"
+    campaign.schedule_at = datetime.utcnow()
+    campaign.updated_at = datetime.utcnow()
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return _sms_campaign_to_item(campaign)
+
+
+@app.post("/api/sms/campaigns/{campaign_id}/pause", response_model=SmsCampaignItem)
+def pause_sms_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SmsCampaignItem:
+    campaign = db.query(SmsCampaign).filter(SmsCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    campaign.status = "paused"
+    campaign.updated_at = datetime.utcnow()
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return _sms_campaign_to_item(campaign)
+
+
+@app.post("/api/sms/campaigns/{campaign_id}/resume", response_model=SmsCampaignItem)
+def resume_sms_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SmsCampaignItem:
+    campaign = db.query(SmsCampaign).filter(SmsCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    campaign.status = "scheduled"
+    campaign.schedule_at = datetime.utcnow()
+    campaign.updated_at = datetime.utcnow()
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return _sms_campaign_to_item(campaign)
+
+
+@app.post("/api/sms/campaigns/{campaign_id}/cancel", response_model=SmsCampaignItem)
+def cancel_sms_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("send")),
+) -> SmsCampaignItem:
+    campaign = db.query(SmsCampaign).filter(SmsCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    campaign.status = "canceled"
+    campaign.updated_at = datetime.utcnow()
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return _sms_campaign_to_item(campaign)
+
+
+@app.get("/api/sms/campaigns/{campaign_id}/stats", response_model=SmsCampaignStatsResponse)
+def sms_campaign_stats(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsCampaignStatsResponse:
+    query = db.query(Message).filter(
+        Message.channel == "sms", Message.campaign_id == campaign_id
+    )
+    stats = _sms_stats_from_query(query)
+    variants: Dict[str, Dict[str, int]] = {}
+    for variant in ("A", "B"):
+        variant_counts = dict(
+            query.filter(Message.variant == variant)
+            .with_entities(Message.status, func.count(Message.id))
+            .group_by(Message.status)
+            .all()
+        )
+        variants[variant] = {key: int(value) for key, value in variant_counts.items()}
+    return SmsCampaignStatsResponse(
+        campaign_id=campaign_id,
+        total=stats.total,
+        delivered=stats.delivered,
+        failed=stats.failed,
+        undelivered=stats.undelivered,
+        queued=stats.queued,
+        sent=stats.sent,
+        received=stats.received,
+        blocked=stats.blocked,
+        cost=stats.cost,
+        price_unit=stats.price_unit,
+        variants=variants or None,
+    )
+
+
+@app.get("/api/sms/keywords", response_model=SmsKeywordRuleListResponse)
+def list_sms_keyword_rules(
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsKeywordRuleListResponse:
+    rules = db.query(SmsKeywordRule).order_by(SmsKeywordRule.created_at.desc()).all()
+    return SmsKeywordRuleListResponse(rules=[_sms_keyword_rule_to_item(rule) for rule in rules])
+
+
+@app.post("/api/sms/keywords", response_model=SmsKeywordRuleItem)
+def create_sms_keyword_rule(
+    payload: SmsKeywordRuleCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsKeywordRuleItem:
+    match_type = payload.match_type.lower()
+    if match_type not in {"exact", "contains", "regex"}:
+        raise HTTPException(status_code=400, detail="invalid match_type")
+    rule = SmsKeywordRule(
+        keyword=payload.keyword,
+        match_type=match_type,
+        response_text=payload.response_text,
+        enabled=payload.enabled if payload.enabled is not None else True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _sms_keyword_rule_to_item(rule)
+
+
+@app.patch("/api/sms/keywords/{rule_id}", response_model=SmsKeywordRuleItem)
+def update_sms_keyword_rule(
+    rule_id: int,
+    payload: SmsKeywordRuleUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsKeywordRuleItem:
+    rule = db.query(SmsKeywordRule).filter(SmsKeywordRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="rule not found")
+    if payload.keyword is not None:
+        rule.keyword = payload.keyword
+    if payload.match_type is not None:
+        match_type = payload.match_type.lower()
+        if match_type not in {"exact", "contains", "regex"}:
+            raise HTTPException(status_code=400, detail="invalid match_type")
+        rule.match_type = match_type
+    if payload.response_text is not None:
+        rule.response_text = payload.response_text
+    if payload.enabled is not None:
+        rule.enabled = payload.enabled
+    rule.updated_at = datetime.utcnow()
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _sms_keyword_rule_to_item(rule)
+
+
+@app.delete("/api/sms/keywords/{rule_id}", response_model=SmsKeywordRuleItem)
+def delete_sms_keyword_rule(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsKeywordRuleItem:
+    rule = db.query(SmsKeywordRule).filter(SmsKeywordRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="rule not found")
+    item = _sms_keyword_rule_to_item(rule)
+    db.delete(rule)
+    db.commit()
+    return item
+
+
+@app.get("/api/sms/opt-outs", response_model=SmsOptOutListResponse)
+def list_sms_opt_outs(
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsOptOutListResponse:
+    opt_outs = db.query(SmsOptOut).order_by(SmsOptOut.created_at.desc()).all()
+    return SmsOptOutListResponse(
+        opt_outs=[
+            SmsOptOutItem(
+                id=opt_out.id,
+                phone=opt_out.phone,
+                reason=opt_out.reason,
+                source=opt_out.source,
+                created_at=opt_out.created_at,
+            )
+            for opt_out in opt_outs
+        ]
+    )
+
+
+@app.post("/api/sms/opt-outs", response_model=SmsOptOutItem)
+def create_sms_opt_out(
+    payload: SmsOptOutCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsOptOutItem:
+    phone = _normalize_sms_phone(payload.phone)
+    existing = db.query(SmsOptOut).filter(SmsOptOut.phone == phone).first()
+    if existing:
+        return SmsOptOutItem(
+            id=existing.id,
+            phone=existing.phone,
+            reason=existing.reason,
+            source=existing.source,
+            created_at=existing.created_at,
+        )
+    record = SmsOptOut(
+        phone=phone,
+        reason=payload.reason,
+        source=payload.source,
+        created_at=datetime.utcnow(),
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return SmsOptOutItem(
+        id=record.id,
+        phone=record.phone,
+        reason=record.reason,
+        source=record.source,
+        created_at=record.created_at,
+    )
+
+
+@app.delete("/api/sms/opt-outs/{opt_out_id}", response_model=SmsOptOutItem)
+def delete_sms_opt_out(
+    opt_out_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsOptOutItem:
+    record = db.query(SmsOptOut).filter(SmsOptOut.id == opt_out_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="opt-out not found")
+    item = SmsOptOutItem(
+        id=record.id,
+        phone=record.phone,
+        reason=record.reason,
+        source=record.source,
+        created_at=record.created_at,
+    )
+    db.delete(record)
+    db.commit()
+    return item
+
+
+@app.get("/api/sms/blacklist", response_model=SmsBlacklistListResponse)
+def list_sms_blacklist(
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsBlacklistListResponse:
+    records = db.query(SmsBlacklist).order_by(SmsBlacklist.created_at.desc()).all()
+    return SmsBlacklistListResponse(
+        blacklist=[
+            SmsBlacklistItem(
+                id=item.id,
+                phone=item.phone,
+                reason=item.reason,
+                created_at=item.created_at,
+            )
+            for item in records
+        ]
+    )
+
+
+@app.post("/api/sms/blacklist", response_model=SmsBlacklistItem)
+def create_sms_blacklist(
+    payload: SmsBlacklistCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsBlacklistItem:
+    phone = _normalize_sms_phone(payload.phone)
+    existing = db.query(SmsBlacklist).filter(SmsBlacklist.phone == phone).first()
+    if existing:
+        return SmsBlacklistItem(
+            id=existing.id,
+            phone=existing.phone,
+            reason=existing.reason,
+            created_at=existing.created_at,
+        )
+    record = SmsBlacklist(
+        phone=phone,
+        reason=payload.reason,
+        created_at=datetime.utcnow(),
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return SmsBlacklistItem(
+        id=record.id,
+        phone=record.phone,
+        reason=record.reason,
+        created_at=record.created_at,
+    )
+
+
+@app.delete("/api/sms/blacklist/{record_id}", response_model=SmsBlacklistItem)
+def delete_sms_blacklist(
+    record_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsBlacklistItem:
+    record = db.query(SmsBlacklist).filter(SmsBlacklist.id == record_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="blacklist record not found")
+    item = SmsBlacklistItem(
+        id=record.id,
+        phone=record.phone,
+        reason=record.reason,
+        created_at=record.created_at,
+    )
+    db.delete(record)
+    db.commit()
+    return item
+
+
+@app.get("/api/sms/stats", response_model=SmsStatsResponse)
+def sms_stats(
+    created_from: Optional[datetime] = None,
+    created_to: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> SmsStatsResponse:
+    query = db.query(Message).filter(Message.channel == "sms")
+    if created_from:
+        query = query.filter(Message.created_at >= created_from)
+    if created_to:
+        query = query.filter(Message.created_at <= created_to)
+    return _sms_stats_from_query(query)
 
 
 @app.get("/api/status/{message_id}", response_model=MessageStatus)
@@ -1296,6 +3248,8 @@ async def twilio_whatsapp_webhook(request: Request, db: Session = Depends(get_db
     if message:
         if message_sid:
             message.provider_message_id = message_sid
+        if not message.direction:
+            message.direction = "outbound"
         if status:
             message.status = status
             # 当Twilio报告消息状态为"read"时，自动更新read_at字段
@@ -1306,6 +3260,244 @@ async def twilio_whatsapp_webhook(request: Request, db: Session = Depends(get_db
         message.updated_at = datetime.utcnow()
         db.add(message)
         db.commit()
+
+    return PlainTextResponse("ok")
+
+
+@app.post("/webhooks/twilio/whatsapp/inbound")
+async def twilio_whatsapp_inbound(
+    request: Request, db: Session = Depends(get_db)
+) -> PlainTextResponse:
+    form = await request.form()
+    params = dict(form)
+    signature = request.headers.get("X-Twilio-Signature", "")
+
+    if settings.twilio_validate_webhook_signature:
+        twilio = _ensure_twilio()
+        if not twilio.validate_webhook(_public_url(request), params, signature):
+            raise HTTPException(status_code=403, detail="invalid signature")
+
+    from_value = params.get("From")
+    to_value = params.get("To")
+    if not from_value or not to_value:
+        raise HTTPException(status_code=400, detail="From and To are required")
+
+    message_sid = (
+        params.get("MessageSid")
+        or params.get("SmsMessageSid")
+        or params.get("SmsSid")
+    )
+    if message_sid:
+        existing = (
+            db.query(Message)
+            .filter(Message.provider_message_id == message_sid)
+            .first()
+        )
+        if existing:
+            return PlainTextResponse("ok")
+
+    body = params.get("Body") or ""
+    try:
+        media_count = int(params.get("NumMedia") or 0)
+    except ValueError:
+        media_count = 0
+    if media_count > 0:
+        media_urls: List[str] = []
+        for i in range(media_count):
+            url = params.get(f"MediaUrl{i}")
+            if url:
+                media_urls.append(url)
+        if media_urls:
+            if body:
+                body = f"{body}\n" + "\n".join(media_urls)
+            else:
+                body = "Media:\n" + "\n".join(media_urls)
+
+    now = datetime.utcnow()
+    message = Message(
+        batch_id=f"inbound_{uuid4().hex}",
+        channel="whatsapp",
+        to_address=normalize_whatsapp(to_value.strip()),
+        from_address=normalize_whatsapp(from_value.strip()),
+        subject=None,
+        body=body or None,
+        status="received",
+        provider_message_id=message_sid,
+        direction="inbound",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(message)
+    db.commit()
+
+    return PlainTextResponse("ok")
+
+
+@app.post("/webhooks/twilio/sms/status")
+async def twilio_sms_status(
+    request: Request, db: Session = Depends(get_db)
+) -> PlainTextResponse:
+    form = await request.form()
+    params = dict(form)
+    signature = request.headers.get("X-Twilio-Signature", "")
+
+    if settings.twilio_validate_webhook_signature:
+        twilio = _ensure_twilio()
+        if not twilio.validate_webhook(_public_url(request), params, signature):
+            raise HTTPException(status_code=403, detail="invalid signature")
+
+    local_id = request.query_params.get("local_id")
+    message_sid = (
+        params.get("MessageSid")
+        or params.get("SmsMessageSid")
+        or params.get("SmsSid")
+    )
+    status = params.get("MessageStatus") or params.get("SmsStatus")
+    error_code = params.get("ErrorCode")
+    error_message = params.get("ErrorMessage")
+    price = params.get("Price")
+    price_unit = params.get("PriceUnit")
+    num_segments = params.get("NumSegments")
+
+    message = None
+    if local_id:
+        try:
+            message = db.query(Message).filter(Message.id == int(local_id)).first()
+        except ValueError:
+            message = None
+    if not message and message_sid:
+        message = db.query(Message).filter(Message.provider_message_id == message_sid).first()
+
+    if message:
+        if message_sid:
+            message.provider_message_id = message_sid
+        if not message.direction:
+            message.direction = "outbound"
+        if status:
+            message.status = status
+        if price is not None:
+            try:
+                message.price = float(price)
+            except ValueError:
+                pass
+        if price_unit:
+            message.price_unit = price_unit
+        if num_segments:
+            try:
+                message.num_segments = int(num_segments)
+            except ValueError:
+                pass
+        if error_code or error_message:
+            message.error = f"{error_code or ''} {error_message or ''}".strip()
+        message.updated_at = datetime.utcnow()
+        db.add(message)
+        db.commit()
+
+    return PlainTextResponse("ok")
+
+
+@app.post("/webhooks/twilio/sms/inbound")
+async def twilio_sms_inbound(
+    request: Request, db: Session = Depends(get_db)
+) -> PlainTextResponse:
+    form = await request.form()
+    params = dict(form)
+    signature = request.headers.get("X-Twilio-Signature", "")
+
+    if settings.twilio_validate_webhook_signature:
+        twilio = _ensure_twilio()
+        if not twilio.validate_webhook(_public_url(request), params, signature):
+            raise HTTPException(status_code=403, detail="invalid signature")
+
+    from_value = params.get("From")
+    to_value = params.get("To")
+    if not from_value or not to_value:
+        raise HTTPException(status_code=400, detail="From and To are required")
+
+    message_sid = (
+        params.get("MessageSid")
+        or params.get("SmsMessageSid")
+        or params.get("SmsSid")
+    )
+    if message_sid:
+        existing = (
+            db.query(Message)
+            .filter(Message.provider_message_id == message_sid)
+            .first()
+        )
+        if existing:
+            return PlainTextResponse("ok")
+
+    body = (params.get("Body") or "").strip()
+    from_phone = _normalize_sms_phone(from_value)
+    to_phone = _normalize_sms_phone(to_value)
+
+    message = _create_sms_message_record(
+        db,
+        batch_id=f"inbound_{uuid4().hex}",
+        to_address=to_phone,
+        from_address=from_phone,
+        body=body,
+        status="received",
+        direction="inbound",
+        provider_message_id=message_sid,
+    )
+
+    lower_body = body.lower()
+    opt_out_keywords = {"stop", "unsubscribe", "cancel", "end", "quit", "退订", "td", "t"}
+    start_keywords = {"start", "yes", "resume", "恢复", "订阅", "开启"}
+    help_keywords = {"help", "?", "帮助"}
+
+    if any(keyword in lower_body for keyword in opt_out_keywords) or "退订" in body:
+        existing = db.query(SmsOptOut).filter(SmsOptOut.phone == from_phone).first()
+        if not existing:
+            db.add(
+                SmsOptOut(
+                    phone=from_phone,
+                    reason="keyword",
+                    source="inbound",
+                    created_at=datetime.utcnow(),
+                )
+            )
+            db.commit()
+        return PlainTextResponse("ok")
+
+    if any(keyword in lower_body for keyword in start_keywords):
+        db.query(SmsOptOut).filter(SmsOptOut.phone == from_phone).delete()
+        db.commit()
+
+    reply_text = None
+    if settings.sms_auto_reply_enabled:
+        if any(keyword in lower_body for keyword in help_keywords):
+            reply_text = (settings.sms_help_text or "").strip() or None
+        else:
+            rules = (
+                db.query(SmsKeywordRule)
+                .filter(SmsKeywordRule.enabled.is_(True))
+                .order_by(SmsKeywordRule.created_at.desc())
+                .all()
+            )
+            for rule in rules:
+                if _match_keyword(rule, body):
+                    reply_text = rule.response_text
+                    break
+
+    if reply_text:
+        twilio = _ensure_twilio()
+        _send_sms_outbound(
+            db,
+            twilio=twilio,
+            recipient=from_phone,
+            body=reply_text,
+            batch_id=f"reply_{uuid4().hex}",
+            from_number=to_phone,
+            messaging_service_sid=None,
+            campaign_id=None,
+            template_id=None,
+            variant=None,
+            append_opt_out=False,
+            use_proxy=None,
+        )
 
     return PlainTextResponse("ok")
 
@@ -1353,6 +3545,8 @@ async def sendgrid_webhook(request: Request, db: Session = Depends(get_db)) -> J
         if message:
             if sg_message_id:
                 message.provider_message_id = sg_message_id
+            if not message.direction:
+                message.direction = "outbound"
             if status:
                 message.status = status
                 # SendGrid的"open"事件表示邮件被打开/已读
@@ -1370,6 +3564,53 @@ async def sendgrid_webhook(request: Request, db: Session = Depends(get_db)) -> J
     return JSONResponse({"updated": updated})
 
 
+@app.post("/webhooks/sendgrid/inbound")
+async def sendgrid_inbound(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
+    form = await request.form()
+
+    from_raw = _get_form_value(form, "from")
+    to_raw = _get_form_value(form, "to")
+    subject = (_get_form_value(form, "subject") or "").strip()
+    text = _get_form_value(form, "stripped-text") or _get_form_value(form, "text")
+    html = _get_form_value(form, "stripped-html") or _get_form_value(form, "html")
+    headers = _get_form_value(form, "headers")
+    message_id = _get_form_value(form, "message-id") or _extract_sendgrid_message_id(headers)
+
+    from_address = _extract_first_email(from_raw)
+    to_address = _extract_first_email(to_raw)
+    if not from_address or not to_address:
+        raise HTTPException(status_code=400, detail="from and to are required")
+
+    if message_id:
+        existing = (
+            db.query(Message)
+            .filter(Message.provider_message_id == message_id)
+            .first()
+        )
+        if existing:
+            return JSONResponse({"status": "ok", "deduped": True})
+
+    body = (text or html or "").strip()
+    now = datetime.utcnow()
+    message = Message(
+        batch_id=f"inbound_{uuid4().hex}",
+        channel="email",
+        to_address=to_address,
+        from_address=from_address,
+        subject=subject or None,
+        body=body or None,
+        status="received",
+        provider_message_id=message_id,
+        direction="inbound",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(message)
+    db.commit()
+
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/api/chat/{user_address}", response_model=ChatHistoryResponse)
 def get_chat_history(
     user_address: str,
@@ -1380,9 +3621,19 @@ def get_chat_history(
     _: ApiKey = Depends(require_api_key("read")),
 ) -> ChatHistoryResponse:
     """获取指定用户的聊天记录"""
-    query = db.query(Message).filter(
-        (Message.to_address == user_address) | (Message.from_address == user_address)
-    )
+    normalized_user = None
+    cleaned_user = user_address.strip()
+    if cleaned_user and "@" not in cleaned_user:
+        normalized_user = normalize_whatsapp(cleaned_user)
+
+    base_filter = (Message.to_address == cleaned_user) | (Message.from_address == cleaned_user)
+    if normalized_user and normalized_user != cleaned_user:
+        base_filter = base_filter | (
+            (Message.channel == "whatsapp")
+            & ((Message.to_address == normalized_user) | (Message.from_address == normalized_user))
+        )
+
+    query = db.query(Message).filter(base_filter)
 
     if channel:
         query = query.filter(Message.channel == channel)
@@ -1408,6 +3659,7 @@ def get_chat_history(
 def list_whatsapp_messages(
     status: Optional[str] = None,
     to_address: Optional[str] = None,
+    user_address: Optional[str] = None,
     created_from: Optional[datetime] = None,
     created_to: Optional[datetime] = None,
     limit: int = 100,
@@ -1425,8 +3677,25 @@ def list_whatsapp_messages(
 
     if status:
         query = query.filter(Message.status == status)
+    if user_address:
+        cleaned_user = user_address.strip()
+        normalized_user = (
+            normalize_whatsapp(cleaned_user) if cleaned_user and "@" not in cleaned_user else cleaned_user
+        )
+        query = query.filter(
+            (Message.to_address == cleaned_user)
+            | (Message.from_address == cleaned_user)
+            | (
+                (Message.to_address == normalized_user)
+                | (Message.from_address == normalized_user)
+            )
+        )
     if to_address:
-        query = query.filter(Message.to_address == to_address)
+        cleaned_to = to_address.strip()
+        normalized_to = (
+            normalize_whatsapp(cleaned_to) if cleaned_to and "@" not in cleaned_to else cleaned_to
+        )
+        query = query.filter(Message.to_address == normalized_to)
     if created_from:
         query = query.filter(Message.created_at >= created_from)
     if created_to:
@@ -1479,56 +3748,53 @@ def list_users_with_messages(
             pass
     
     # 构建基础查询
-    base_query = db.query(Message.to_address)
-    
+    user_address_expr = _user_address_expr().label("user_address")
+    base_query = db.query(user_address_expr)
+
     if channel:
         base_query = base_query.filter(Message.channel == channel)
     if from_datetime:
         base_query = base_query.filter(Message.created_at >= from_datetime)
     if to_datetime:
         base_query = base_query.filter(Message.created_at <= to_datetime)
-    
+    base_query = base_query.filter(user_address_expr.isnot(None), user_address_expr != "")
+
     # 获取所有不同的用户地址
     distinct_users = base_query.distinct().all()
     total_users = len(distinct_users)
-    
+
     # 分页
     paginated_users = distinct_users[offset:offset + limit]
-    
+
     # 为每个用户统计信息
     user_stats_list = []
     for (user_address,) in paginated_users:
-        user_query = db.query(Message).filter(Message.to_address == user_address)
-        
+        user_filter = (Message.to_address == user_address) | (Message.from_address == user_address)
+        user_query = db.query(Message).filter(user_filter)
+
         if channel:
             user_query = user_query.filter(Message.channel == channel)
         if from_datetime:
             user_query = user_query.filter(Message.created_at >= from_datetime)
         if to_datetime:
             user_query = user_query.filter(Message.created_at <= to_datetime)
-        
+
         total_messages = user_query.count()
         unread_count = user_query.filter(Message.read_at.is_(None)).count()
-        
+
         # 获取最后一条消息的时间
-        last_message = (
-            user_query.order_by(Message.created_at.desc()).first()
-        )
+        last_message = user_query.order_by(Message.created_at.desc()).first()
         last_message_at = last_message.created_at if last_message else None
-        
+
         # 获取使用的渠道列表
-        channels_query = (
-            db.query(Message.channel)
-            .filter(Message.to_address == user_address)
-            .distinct()
-        )
+        channels_query = db.query(Message.channel).filter(user_filter).distinct()
         if channel:
             channels_query = channels_query.filter(Message.channel == channel)
         if from_datetime:
             channels_query = channels_query.filter(Message.created_at >= from_datetime)
         if to_datetime:
             channels_query = channels_query.filter(Message.created_at <= to_datetime)
-        
+
         channels = [ch[0] for ch in channels_query.all()]
         
         user_stats_list.append(

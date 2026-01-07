@@ -2,7 +2,7 @@ from typing import Dict, Optional, Tuple
 
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.eventwebhook import EventWebhook
-from sendgrid.helpers.mail import Content, Email, Mail, Personalization, To
+from sendgrid.helpers.mail import Content, CustomArg, Email, Mail, Personalization, To
 
 from app.config import settings
 
@@ -46,7 +46,8 @@ class SendGridService:
         personalization = Personalization()
         personalization.add_to(To(to_email))
         if custom_args:
-            personalization.custom_args = custom_args
+            for key, value in custom_args.items():
+                personalization.add_custom_arg(CustomArg(key, value))
         mail.add_personalization(personalization)
 
         response = self._client.send(mail)

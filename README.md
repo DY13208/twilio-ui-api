@@ -1,6 +1,6 @@
-# Twilio Broadcast Console (Email + WhatsApp)
+# Twilio Broadcast Console (Email + WhatsApp + SMS)
 
-Minimal FastAPI service with a web UI for broadcasting Email (SendGrid) and WhatsApp (Twilio), plus status tracking via webhooks and a REST API.
+Minimal FastAPI service with a web UI for broadcasting Email (SendGrid), WhatsApp (Twilio), and SMS (Twilio), plus status tracking via webhooks and a REST API.
 
 ## Setup
 
@@ -31,6 +31,7 @@ Make sure to set admin credentials so you can log in:
 ```
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change_me
+ADMIN_JWT_SECRET=change_me_too
 ```
 
 If you're behind a TLS-terminating proxy, set `ADMIN_COOKIE_SECURE=true` (or pass
@@ -45,13 +46,26 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Open `http://localhost:8000` for the UI.
 Open `http://localhost:8000/api-docs` for API docs.
+Open `http://localhost:8000/sms` for SMS marketing after login.
 Open `http://localhost:8000/keys` for API key management after login.
+Open `http://localhost:8000/users` for 用户管理 after login.
+
+## UI Screenshots
+
+![Home page](assets/%E9%A6%96%E9%A1%B5.png)
+
+![API docs](assets/API%E6%96%87%E6%A1%A3.png)
+
+![API key management](assets/API%20Key%20%E7%AE%A1%E7%90%86.png)
 
 ## API
 
-All `/api/*` endpoints (except `/api/login`, `/api/logout`, and `/api/keys*`) require an API key.
-Send it via `X-API-Key: <key>` or `Authorization: Bearer <key>`.
-`POST /api/login` returns a per-admin `token`; API keys are bound to the admin user that created them.
+All `/api/*` endpoints (except `/api/login` and `/api/logout`) require authentication.
+Message APIs use API keys via `X-API-Key: <key>` or `Authorization: Bearer <key>`.
+Admin APIs (`/api/keys*`, `/api/admin/*`) require the admin JWT from `POST /api/login` via
+`Authorization: Bearer <token>`.
+API keys are bound to the admin user that created them (or were assigned).
+`GET /api/admin/token` can re-issue a JWT using the admin session cookie.
 
 API key scopes:
 
@@ -68,6 +82,44 @@ API key scopes:
 - `POST /api/whatsapp/senders`
 - `DELETE /api/whatsapp/senders`
 - `GET /api/whatsapp/templates`
+- `POST /api/send/sms`
+- `GET /api/sms/templates`
+- `POST /api/sms/templates`
+- `PATCH /api/sms/templates/{template_id}`
+- `DELETE /api/sms/templates/{template_id}`
+- `GET /api/sms/contacts`
+- `POST /api/sms/contacts`
+- `PATCH /api/sms/contacts/{contact_id}`
+- `DELETE /api/sms/contacts/{contact_id}`
+- `POST /api/sms/contacts/import`
+- `GET /api/sms/contacts/export`
+- `GET /api/sms/groups`
+- `POST /api/sms/groups`
+- `PATCH /api/sms/groups/{group_id}`
+- `DELETE /api/sms/groups/{group_id}`
+- `GET /api/sms/groups/{group_id}/members`
+- `POST /api/sms/groups/{group_id}/members`
+- `DELETE /api/sms/groups/{group_id}/members`
+- `GET /api/sms/campaigns`
+- `POST /api/sms/campaigns`
+- `PATCH /api/sms/campaigns/{campaign_id}`
+- `POST /api/sms/campaigns/{campaign_id}/schedule`
+- `POST /api/sms/campaigns/{campaign_id}/start`
+- `POST /api/sms/campaigns/{campaign_id}/pause`
+- `POST /api/sms/campaigns/{campaign_id}/resume`
+- `POST /api/sms/campaigns/{campaign_id}/cancel`
+- `GET /api/sms/campaigns/{campaign_id}/stats`
+- `GET /api/sms/keywords`
+- `POST /api/sms/keywords`
+- `PATCH /api/sms/keywords/{rule_id}`
+- `DELETE /api/sms/keywords/{rule_id}`
+- `GET /api/sms/opt-outs`
+- `POST /api/sms/opt-outs`
+- `DELETE /api/sms/opt-outs/{opt_out_id}`
+- `GET /api/sms/blacklist`
+- `POST /api/sms/blacklist`
+- `DELETE /api/sms/blacklist/{record_id}`
+- `GET /api/sms/stats`
 - `GET /api/status/{message_id}`
 - `GET /api/batch/{batch_id}`
 - `GET /api/status/twilio/{message_sid}`
@@ -75,11 +127,14 @@ API key scopes:
 - `POST /api/logout`
 - `GET /api/keys`
 - `POST /api/keys`
+- `PATCH /api/keys/{key_id}`
 - `POST /api/keys/{key_id}/revoke`
+- `GET /api/admin/token`
 - `GET /api/admin/users`
 - `POST /api/admin/users`
 - `POST /api/admin/users/{user_id}/disable`
 - `POST /api/admin/users/{user_id}/enable`
+- `DELETE /api/admin/users/{user_id}`
 - `POST /webhooks/twilio/whatsapp`
 - `POST /webhooks/sendgrid`
 
@@ -155,7 +210,11 @@ curl -X POST http://localhost:8000/api/keys ^
 ## Webhooks
 
 - **Twilio WhatsApp**: configure the Status Callback URL to `PUBLIC_BASE_URL/webhooks/twilio/whatsapp`.
+- **Twilio WhatsApp inbound**: configure the incoming message webhook to `PUBLIC_BASE_URL/webhooks/twilio/whatsapp/inbound`.
+- **Twilio SMS status**: configure the Status Callback URL to `PUBLIC_BASE_URL/webhooks/twilio/sms/status`.
+- **Twilio SMS inbound**: configure the incoming message webhook to `PUBLIC_BASE_URL/webhooks/twilio/sms/inbound`.
 - **SendGrid**: configure Event Webhook to `PUBLIC_BASE_URL/webhooks/sendgrid`.
+- **SendGrid Inbound Parse**: configure Inbound Parse to `PUBLIC_BASE_URL/webhooks/sendgrid/inbound`.
 
 If you enable signature verification:
 
@@ -188,6 +247,7 @@ cp .env.example .env
 PUBLIC_BASE_URL=https://your-domain.com
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=change_me
+ADMIN_JWT_SECRET=change_me_too
 ADMIN_COOKIE_SECURE=true
 ```
 

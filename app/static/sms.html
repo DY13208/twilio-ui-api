@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>短信营销</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">短信营销</div>
+        <div class="subtitle">使用 Twilio 管理短信模板、联系人、分组与营销活动。</div>
+        <div class="header-links">
+          <a href="./" class="link">控制台</a>
+          <a href="chat" class="link">聊天记录</a>
+          <a href="api-docs" class="link">API 文档</a>
+          <a href="keys" class="link">Key 管理</a>
+          <a href="users" class="link">用户管理</a>
+          <a href="logout" class="link">退出</a>
+        </div>
+      </header>
+
+      <main class="grid sms-grid">
+        <section class="card">
+          <h2>短信发送</h2>
+          <form id="sms-send-form">
+            <div class="field">
+              <label>发送方式</label>
+              <div class="segmented">
+                <label>
+                  <input type="radio" name="sms-send-mode" value="text" checked />
+                  文本
+                </label>
+                <label>
+                  <input type="radio" name="sms-send-mode" value="template" />
+                  模板
+                </label>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>收件人</label>
+              <textarea
+                id="sms-recipients"
+                rows="4"
+                placeholder="每行一个手机号，或用逗号分隔"
+              ></textarea>
+            </div>
+
+            <div class="field" id="sms-message-row">
+              <label>短信内容</label>
+              <textarea
+                id="sms-message"
+                rows="4"
+                placeholder="例如：感谢关注，今日优惠已上线"
+              ></textarea>
+            </div>
+
+            <div class="field" id="sms-template-row" style="display: none;">
+              <label>模板选择</label>
+              <div class="row">
+                <select id="sms-template-select"></select>
+                <button type="button" class="secondary small" id="sms-template-refresh">
+                  刷新模板
+                </button>
+              </div>
+            </div>
+
+            <div class="field" id="sms-template-vars-row" style="display: none;">
+              <label>模板变量（JSON，可选）</label>
+              <textarea
+                id="sms-template-vars"
+                rows="3"
+                placeholder='{"name":"张三","code":"A23"}'
+              ></textarea>
+            </div>
+
+            <div class="field">
+              <label>发送配置</label>
+              <div class="row">
+                <input
+                  id="sms-from-number"
+                  type="text"
+                  placeholder="发送号码（可选）"
+                />
+                <input
+                  id="sms-messaging-service"
+                  type="text"
+                  placeholder="消息服务 SID（可选）"
+                />
+              </div>
+              <div class="row">
+                <input id="sms-rate" type="number" min="1" placeholder="每分钟限速" />
+                <input id="sms-batch" type="number" min="1" placeholder="批次大小" />
+              </div>
+              <label class="toggle">
+                <input id="sms-append-opt-out" type="checkbox" checked />
+                <span>自动追加退订文案</span>
+              </label>
+            </div>
+
+            <button type="submit" class="primary">立即发送</button>
+            <div class="hint">手机号请带国家码，例如 +8613712345678。</div>
+          </form>
+          <div class="result">
+            <pre id="sms-send-result">发送结果将显示在这里。</pre>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>短信模板</h2>
+          <div class="stack">
+            <div class="field">
+              <label>模板 ID（更新用）</label>
+              <input id="sms-template-id" type="number" placeholder="例如 12" />
+            </div>
+            <div class="field">
+              <label>模板名称</label>
+              <input id="sms-template-name" type="text" placeholder="例如 节日优惠" />
+            </div>
+            <div class="field">
+              <label>模板内容</label>
+              <textarea
+                id="sms-template-body"
+                rows="4"
+                placeholder="例如：{name}您好，优惠券{code}已到账。"
+              ></textarea>
+            </div>
+            <div class="field">
+              <label>变量列表（用逗号分隔，可选）</label>
+              <input
+                id="sms-template-variables"
+                type="text"
+                placeholder="例如 name, code"
+              />
+            </div>
+            <div class="row">
+              <button id="sms-template-create" type="button" class="secondary">
+                创建模板
+              </button>
+              <button id="sms-template-update" type="button" class="secondary">
+                更新模板
+              </button>
+              <button id="sms-template-disable" type="button" class="ghost">
+                停用
+              </button>
+              <button id="sms-template-enable" type="button" class="ghost">
+                启用
+              </button>
+              <button id="sms-template-clear" type="button" class="ghost">
+                清空
+              </button>
+            </div>
+          </div>
+          <div class="field" style="margin-top: 16px;">
+            <label>模板列表</label>
+            <div class="row">
+              <button id="sms-template-list-refresh" type="button" class="secondary small">
+                刷新列表
+              </button>
+            </div>
+            <div class="stack" id="sms-template-list"></div>
+          </div>
+        </section>
+
+        <section class="card wide">
+          <h2>联系人管理</h2>
+          <div class="row">
+            <div class="field" style="flex: 1; min-width: 200px;">
+              <label>搜索（姓名或手机号）</label>
+              <input id="sms-contact-search" type="text" placeholder="例如 张三" />
+            </div>
+            <div class="field" style="flex: 1; min-width: 200px;">
+              <label>标签筛选</label>
+              <input id="sms-contact-tag" type="text" placeholder="例如 VIP" />
+            </div>
+            <div class="field" style="flex: 0 0 auto;">
+              <label>包含停用</label>
+              <label class="toggle">
+                <input id="sms-contact-include-disabled" type="checkbox" />
+                <span>显示</span>
+              </label>
+            </div>
+            <div class="field" style="flex: 0 0 auto;">
+              <label>&nbsp;</label>
+              <button id="sms-contact-refresh" type="button" class="secondary">
+                刷新
+              </button>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field" style="flex: 1; min-width: 120px;">
+              <label>联系人 ID（更新用）</label>
+              <input id="sms-contact-id" type="number" placeholder="例如 18" />
+            </div>
+            <div class="field" style="flex: 1; min-width: 180px;">
+              <label>手机号</label>
+              <input id="sms-contact-phone" type="text" placeholder="+8613712345678" />
+            </div>
+            <div class="field" style="flex: 1; min-width: 180px;">
+              <label>姓名（可选）</label>
+              <input id="sms-contact-name" type="text" placeholder="张三" />
+            </div>
+            <div class="field" style="flex: 1; min-width: 180px;">
+              <label>标签（逗号分隔）</label>
+              <input id="sms-contact-tags" type="text" placeholder="VIP, 华东" />
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="sms-contact-create" type="button" class="secondary">
+              新增联系人
+            </button>
+            <button id="sms-contact-update" type="button" class="secondary">
+              更新联系人
+            </button>
+            <button id="sms-contact-disable" type="button" class="ghost">
+              停用
+            </button>
+            <button id="sms-contact-enable" type="button" class="ghost">
+              启用
+            </button>
+            <button id="sms-contact-clear" type="button" class="ghost">
+              清空
+            </button>
+          </div>
+
+          <div class="row" style="margin-top: 10px;">
+            <div class="field" style="flex: 1; min-width: 240px;">
+              <label>导入 CSV</label>
+              <input id="sms-contact-import-file" type="file" accept=".csv" />
+            </div>
+            <div class="field" style="flex: 0 0 160px;">
+              <label>加入分组 ID（可选）</label>
+              <input id="sms-contact-import-group" type="number" placeholder="分组 ID" />
+            </div>
+            <div class="field" style="flex: 0 0 auto;">
+              <label>&nbsp;</label>
+              <button id="sms-contact-import" type="button" class="secondary">
+                导入
+              </button>
+            </div>
+            <div class="field" style="flex: 0 0 auto;">
+              <label>&nbsp;</label>
+              <button id="sms-contact-export" type="button" class="ghost">
+                导出
+              </button>
+            </div>
+          </div>
+
+          <div class="stack" id="sms-contact-list"></div>
+          <div class="row" style="justify-content: space-between; margin-top: 12px;">
+            <div class="hint">共 <span id="sms-contact-total">0</span> 位联系人</div>
+            <div class="row">
+              <button id="sms-contact-prev" type="button" class="ghost small" disabled>
+                上一页
+              </button>
+              <button id="sms-contact-next" type="button" class="ghost small" disabled>
+                下一页
+              </button>
+            </div>
+          </div>
+          <div class="result">
+            <pre id="sms-contact-result">联系人操作结果将显示在这里。</pre>
+          </div>
+        </section>
+
+        <section class="card wide">
+          <h2>分组管理</h2>
+          <div class="row">
+            <div style="flex: 1; min-width: 260px;">
+              <div class="field">
+                <label>分组 ID（更新用）</label>
+                <input id="sms-group-id" type="number" placeholder="例如 6" />
+              </div>
+              <div class="field">
+                <label>分组名称</label>
+                <input id="sms-group-name" type="text" placeholder="例如 VIP 用户" />
+              </div>
+              <div class="field">
+                <label>描述（可选）</label>
+                <textarea
+                  id="sms-group-description"
+                  rows="2"
+                  placeholder="例如：重点促销客户"
+                ></textarea>
+              </div>
+              <div class="row">
+                <button id="sms-group-create" type="button" class="secondary">
+                  新增分组
+                </button>
+                <button id="sms-group-update" type="button" class="secondary">
+                  更新分组
+                </button>
+                <button id="sms-group-delete" type="button" class="ghost">
+                  删除分组
+                </button>
+                <button id="sms-group-clear" type="button" class="ghost">
+                  清空
+                </button>
+              </div>
+              <div class="field" style="margin-top: 16px;">
+                <label>分组列表</label>
+                <div class="row">
+                  <button id="sms-group-refresh" type="button" class="secondary small">
+                    刷新列表
+                  </button>
+                </div>
+                <div class="stack" id="sms-group-list"></div>
+              </div>
+            </div>
+
+            <div style="flex: 1; min-width: 260px;">
+              <div class="field">
+                <label>成员管理（需先选择分组）</label>
+                <input
+                  id="sms-group-member-ids"
+                  type="text"
+                  placeholder="联系人 ID，逗号分隔"
+                />
+                <input
+                  id="sms-group-member-phones"
+                  type="text"
+                  placeholder="手机号，逗号分隔"
+                  style="margin-top: 8px;"
+                />
+              </div>
+              <div class="row">
+                <button id="sms-group-member-add" type="button" class="secondary">
+                  添加成员
+                </button>
+                <button id="sms-group-member-remove" type="button" class="ghost">
+                  移除成员
+                </button>
+              </div>
+              <div class="field" style="margin-top: 16px;">
+                <label>成员列表</label>
+                <div class="stack" id="sms-group-members"></div>
+              </div>
+            </div>
+          </div>
+          <div class="result">
+            <pre id="sms-group-result">分组操作结果将显示在这里。</pre>
+          </div>
+        </section>
+
+        <section class="card wide">
+          <h2>营销活动</h2>
+          <div class="row">
+            <div style="flex: 1; min-width: 260px;">
+              <div class="field">
+                <label>活动 ID（更新用）</label>
+                <input id="sms-campaign-id" type="number" placeholder="例如 3" />
+              </div>
+              <div class="field">
+                <label>活动名称</label>
+                <input id="sms-campaign-name" type="text" placeholder="例如 春季促销" />
+              </div>
+              <div class="field">
+                <label>短信内容</label>
+                <textarea
+                  id="sms-campaign-message"
+                  rows="3"
+                  placeholder="不使用模板时填写"
+                ></textarea>
+              </div>
+              <div class="field">
+                <label>模板（可选）</label>
+                <select id="sms-campaign-template"></select>
+              </div>
+              <div class="field">
+                <label>模板变量（JSON，可选）</label>
+                <textarea
+                  id="sms-campaign-template-vars"
+                  rows="3"
+                  placeholder='{"name":"张三"}'
+                ></textarea>
+              </div>
+              <div class="field">
+                <label>A/B 文案（可选）</label>
+                <textarea
+                  id="sms-campaign-variant-a"
+                  rows="2"
+                  placeholder="版本 A"
+                ></textarea>
+                <textarea
+                  id="sms-campaign-variant-b"
+                  rows="2"
+                  placeholder="版本 B"
+                  style="margin-top: 8px;"
+                ></textarea>
+                <input
+                  id="sms-campaign-ab-split"
+                  type="number"
+                  min="0"
+                  max="100"
+                  placeholder="A 占比（0-100）"
+                  style="margin-top: 8px;"
+                />
+              </div>
+            </div>
+
+            <div style="flex: 1; min-width: 260px;">
+              <div class="field">
+                <label>计划发送时间（可选）</label>
+                <input id="sms-campaign-schedule" type="datetime-local" />
+              </div>
+              <div class="field">
+                <label>发送配置</label>
+                <input
+                  id="sms-campaign-from"
+                  type="text"
+                  placeholder="发送号码（可选）"
+                />
+                <input
+                  id="sms-campaign-service"
+                  type="text"
+                  placeholder="Messaging Service SID（可选）"
+                  style="margin-top: 8px;"
+                />
+                <div class="row" style="margin-top: 8px;">
+                  <input id="sms-campaign-rate" type="number" min="1" placeholder="每分钟限速" />
+                  <input id="sms-campaign-batch" type="number" min="1" placeholder="批次大小" />
+                </div>
+                <label class="toggle" style="margin-top: 8px;">
+                  <input id="sms-campaign-append-opt-out" type="checkbox" checked />
+                  <span>自动追加退订文案</span>
+                </label>
+              </div>
+              <div class="field">
+                <label>受众范围</label>
+                <input
+                  id="sms-campaign-groups"
+                  type="text"
+                  placeholder="分组 ID（逗号分隔）"
+                />
+                <input
+                  id="sms-campaign-tags"
+                  type="text"
+                  placeholder="标签（逗号分隔）"
+                  style="margin-top: 8px;"
+                />
+                <textarea
+                  id="sms-campaign-recipients"
+                  rows="3"
+                  placeholder="直接输入手机号（每行一个）"
+                  style="margin-top: 8px;"
+                ></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="sms-campaign-create" type="button" class="secondary">
+              创建活动
+            </button>
+            <button id="sms-campaign-update" type="button" class="secondary">
+              更新活动
+            </button>
+            <button id="sms-campaign-clear" type="button" class="ghost">
+              清空
+            </button>
+          </div>
+
+          <div class="field" style="margin-top: 16px;">
+            <label>活动列表</label>
+            <div class="row">
+              <select id="sms-campaign-filter">
+                <option value="">全部状态</option>
+                <option value="draft">草稿</option>
+                <option value="scheduled">已排期</option>
+                <option value="running">发送中</option>
+                <option value="paused">已暂停</option>
+                <option value="completed">已完成</option>
+                <option value="canceled">已取消</option>
+                <option value="failed">失败</option>
+              </select>
+              <button id="sms-campaign-refresh" type="button" class="secondary small">
+                刷新列表
+              </button>
+            </div>
+            <div class="stack" id="sms-campaign-list"></div>
+          </div>
+          <div class="result">
+            <pre id="sms-campaign-result">活动操作结果将显示在这里。</pre>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>关键词回复</h2>
+          <div class="field">
+            <label>规则 ID（更新用）</label>
+            <input id="sms-keyword-id" type="number" placeholder="例如 5" />
+          </div>
+          <div class="field">
+            <label>关键词</label>
+            <input id="sms-keyword-text" type="text" placeholder="例如 HELP" />
+          </div>
+          <div class="field">
+            <label>匹配方式</label>
+            <select id="sms-keyword-match">
+              <option value="contains">包含</option>
+              <option value="exact">完全匹配</option>
+              <option value="regex">正则</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>回复内容</label>
+            <textarea id="sms-keyword-response" rows="3"></textarea>
+          </div>
+          <label class="toggle" style="margin-bottom: 12px;">
+            <input id="sms-keyword-enabled" type="checkbox" checked />
+            <span>启用</span>
+          </label>
+          <div class="row">
+            <button id="sms-keyword-create" type="button" class="secondary">
+              新增规则
+            </button>
+            <button id="sms-keyword-update" type="button" class="secondary">
+              更新规则
+            </button>
+            <button id="sms-keyword-delete" type="button" class="ghost">
+              删除规则
+            </button>
+            <button id="sms-keyword-clear" type="button" class="ghost">
+              清空
+            </button>
+          </div>
+          <div class="field" style="margin-top: 12px;">
+            <label>规则列表</label>
+            <div class="stack" id="sms-keyword-list"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>退订名单</h2>
+          <div class="field">
+            <label>记录 ID（删除用）</label>
+            <input id="sms-optout-id" type="number" placeholder="例如 10" />
+          </div>
+          <div class="field">
+            <label>手机号</label>
+            <input id="sms-optout-phone" type="text" placeholder="+8613712345678" />
+          </div>
+          <div class="field">
+            <label>原因（可选）</label>
+            <input id="sms-optout-reason" type="text" placeholder="用户回复退订" />
+          </div>
+          <div class="field">
+            <label>来源（可选）</label>
+            <input id="sms-optout-source" type="text" placeholder="webhook/manual" />
+          </div>
+          <div class="row">
+            <button id="sms-optout-create" type="button" class="secondary">
+              添加退订
+            </button>
+            <button id="sms-optout-delete" type="button" class="ghost">
+              删除记录
+            </button>
+            <button id="sms-optout-refresh" type="button" class="ghost">
+              刷新列表
+            </button>
+            <button id="sms-optout-clear" type="button" class="ghost">
+              清空
+            </button>
+          </div>
+          <div class="field" style="margin-top: 12px;">
+            <label>退订列表</label>
+            <div class="stack" id="sms-optout-list"></div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>黑名单</h2>
+          <div class="field">
+            <label>记录 ID（删除用）</label>
+            <input id="sms-blacklist-id" type="number" placeholder="例如 7" />
+          </div>
+          <div class="field">
+            <label>手机号</label>
+            <input id="sms-blacklist-phone" type="text" placeholder="+8613712345678" />
+          </div>
+          <div class="field">
+            <label>原因（可选）</label>
+            <input id="sms-blacklist-reason" type="text" placeholder="投诉/误发" />
+          </div>
+          <div class="row">
+            <button id="sms-blacklist-create" type="button" class="secondary">
+              添加黑名单
+            </button>
+            <button id="sms-blacklist-delete" type="button" class="ghost">
+              删除记录
+            </button>
+            <button id="sms-blacklist-refresh" type="button" class="ghost">
+              刷新列表
+            </button>
+            <button id="sms-blacklist-clear" type="button" class="ghost">
+              清空
+            </button>
+          </div>
+          <div class="field" style="margin-top: 12px;">
+            <label>黑名单列表</label>
+            <div class="stack" id="sms-blacklist-list"></div>
+          </div>
+        </section>
+
+        <section class="card wide">
+          <h2>统计与分析</h2>
+          <div class="row">
+            <div style="flex: 1; min-width: 260px;">
+              <div class="field">
+                <label>总体统计时间范围</label>
+                <input id="sms-stats-from" type="datetime-local" />
+                <input id="sms-stats-to" type="datetime-local" style="margin-top: 8px;" />
+              </div>
+              <button id="sms-stats-refresh" type="button" class="secondary">
+                查询总体统计
+              </button>
+              <div class="result">
+                <pre id="sms-stats-result">总体统计结果将显示在这里。</pre>
+              </div>
+            </div>
+            <div style="flex: 1; min-width: 260px;">
+              <div class="field">
+                <label>活动统计</label>
+                <input
+                  id="sms-campaign-stats-id"
+                  type="number"
+                  placeholder="输入活动 ID"
+                />
+              </div>
+              <button id="sms-campaign-stats-refresh" type="button" class="secondary">
+                查询活动统计
+              </button>
+              <div class="result">
+                <pre id="sms-campaign-stats-result">活动统计结果将显示在这里。</pre>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="static/sms.js"></script>
+  </body>
+</html>

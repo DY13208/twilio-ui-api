@@ -31,6 +31,11 @@ class TwilioService:
             raise RuntimeError("TWILIO_WHATSAPP_FROM is not configured")
         return normalize_whatsapp(settings.twilio_whatsapp_from)
 
+    def sms_from_number(self) -> Optional[str]:
+        if settings.twilio_sms_from:
+            return settings.twilio_sms_from
+        return None
+
     def _get_client(self, use_proxy: Optional[bool]) -> Client:
         if use_proxy is False:
             if self._client_no_proxy is None:
@@ -71,6 +76,32 @@ class TwilioService:
             payload["content_sid"] = content_sid
         if content_variables is not None:
             payload["content_variables"] = json.dumps(content_variables)
+        client = self._get_client(use_proxy)
+        message = client.messages.create(**payload)
+        return message.sid
+
+    def send_sms(
+        self,
+        to_number: str,
+        body: str,
+        status_callback: Optional[str],
+        from_number: Optional[str] = None,
+        messaging_service_sid: Optional[str] = None,
+        use_proxy: Optional[bool] = None,
+    ) -> str:
+        payload: Dict[str, Any] = {
+            "to": to_number,
+            "body": body,
+        }
+        if messaging_service_sid:
+            payload["messaging_service_sid"] = messaging_service_sid
+        else:
+            from_value = from_number or self.sms_from_number()
+            if not from_value:
+                raise RuntimeError("TWILIO_SMS_FROM is not configured")
+            payload["from_"] = from_value
+        if status_callback:
+            payload["status_callback"] = status_callback
         client = self._get_client(use_proxy)
         message = client.messages.create(**payload)
         return message.sid

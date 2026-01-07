@@ -24,6 +24,8 @@ const modalContentEl = document.getElementById("modal-content");
 const modalCloseBtn = document.getElementById("modal-close");
 
 const API_KEY_STORAGE = "broadcast_api_key";
+const DISPLAY_TIME_ZONE = "Asia/Shanghai";
+const CHINA_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 let currentUserAddress = "";
 let currentChannel = "";
 let currentOffset = 0;
@@ -73,15 +75,61 @@ async function apiFetch(url, options = {}) {
   return response;
 }
 
+function parseServerDate(value) {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return null;
+  }
+  const hasTimezone = /[zZ]|[+\-]\d{2}:?\d{2}$/.test(text);
+  const normalized = hasTimezone ? text : `${text}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseChinaDateInput(value) {
+  if (!value) {
+    return null;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return null;
+  }
+  const match = text.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/
+  );
+  if (!match) {
+    return null;
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  const utcMillis =
+    Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second || 0)
+    ) - CHINA_UTC_OFFSET_MS;
+  const date = new Date(utcMillis);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatDateTime(dateString) {
-  if (!dateString) return "";
-  const date = new Date(dateString);
+  const date = parseServerDate(dateString);
+  if (!date) return "";
   return date.toLocaleString("zh-CN", {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: DISPLAY_TIME_ZONE,
   });
 }
 
@@ -92,6 +140,9 @@ function formatChannel(channel) {
   }
   if (normalized === "whatsapp") {
     return "WhatsApp";
+  }
+  if (normalized === "sms") {
+    return "SMS";
   }
   return channel || "";
 }
@@ -107,8 +158,12 @@ function formatStatus(status) {
   const statusMap = {
     queued: "排队中",
     accepted: "已接受",
+    sent: "已发送",
     delivered: "已送达",
+    undelivered: "未送达",
+    received: "已接收",
     read: "已读",
+    blocked: "已拦截",
     failed: "失败",
   };
   return statusMap[status] || status;
@@ -437,9 +492,8 @@ function updateUserStats(total) {
 }
 
 function formatDateTimeForQuery(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
+  const date = parseChinaDateInput(value);
+  if (!date) return null;
   return date.toISOString();
 }
 

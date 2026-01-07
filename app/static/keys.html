@@ -14,6 +14,8 @@
         <div class="header-links">
           <a href="./" class="link">返回控制台</a>
           <a href="api-docs" class="link">API 文档</a>
+          <a href="sms" class="link">短信营销</a>
+          <a href="users" class="link">用户管理</a>
           <a href="logout" class="link">退出</a>
         </div>
       </header>
@@ -45,6 +47,10 @@
           <div class="field">
             <label>名称（可选）</label>
             <input id="new-key-name" type="text" placeholder="例如 Marketing Team" />
+          </div>
+          <div class="field">
+            <label>所有者</label>
+            <select id="new-key-owner"></select>
           </div>
           <div class="row">
             <div class="field" style="flex: 1; min-width: 180px;">
@@ -86,29 +92,7 @@
           <div class="stack" id="keys-list"></div>
         </section>
 
-        <section class="card wide">
-          <h2>管理员用户</h2>
-          <div class="field">
-            <label>新增/重置密码</label>
-            <div class="row">
-              <input
-                id="admin-user-username"
-                type="text"
-                placeholder="用户名"
-              />
-              <input
-                id="admin-user-password"
-                type="password"
-                placeholder="密码"
-              />
-              <button id="admin-user-save" type="button" class="secondary small">
-                保存
-              </button>
-            </div>
-            <div class="hint">同名用户会更新密码并重新启用。</div>
-          </div>
-          <div class="stack" id="admin-users-list"></div>
-        </section>
+        
       </main>
     </div>
     <div id="toast-container" class="toast-container"></div>

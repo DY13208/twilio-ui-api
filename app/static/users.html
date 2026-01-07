@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>用户管理</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">用户管理</div>
+        <div class="subtitle">管理管理员用户及 API 密钥访问权限。</div>
+        <div class="header-links">
+          <a href="./" class="link">仪表板</a>
+          <a href="keys" class="link">密钥管理</a>
+          <a href="api-docs" class="link">API 文档</a>
+          <a href="sms" class="link">短信营销</a>
+          <a href="logout" class="link">退出登录</a>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card">
+          <h2>创建 / 重置密码</h2>
+          <div class="field">
+            <label>用户名</label>
+            <input id="user-username" type="text" placeholder="例如：ops" />
+          </div>
+          <div class="field">
+            <label>密码</label>
+            <input id="user-password" type="password" placeholder="新密码" />
+          </div>
+          <button id="user-save" type="button" class="secondary">保存</button>
+          <div class="hint">如果用户名已存在，将重置该用户的密码。</div>
+        </section>
+
+        <section class="card">
+          <h2>用户列表</h2>
+          <div class="stack" id="users-list"></div>
+        </section>
+
+        <section class="card wide">
+          <h2>用户密钥</h2>
+          <div class="hint" id="selected-user-hint">请选择一个用户以管理其密钥。</div>
+
+          <div class="field">
+            <label>密钥名称（可选）</label>
+            <input id="user-key-name" type="text" placeholder="例如：市场团队" />
+          </div>
+
+          <div class="row">
+            <div class="field" style="flex: 1; min-width: 180px;">
+              <label>权限范围</label>
+              <select id="user-key-scope">
+                <option value="manage">管理</option>
+                <option value="send">发送</option>
+                <option value="read">只读</option>
+              </select>
+            </div>
+
+            <div class="field" style="flex: 1; min-width: 180px;">
+              <label>有效期（天）</label>
+              <input
+                id="user-key-expire"
+                type="number"
+                min="1"
+                placeholder="留空表示永久有效"
+              />
+            </div>
+          </div>
+
+          <button id="user-key-create" type="button" class="primary">创建密钥</button>
+
+          <div class="result">
+            <pre id="user-key-result">密钥创建后将显示在这里。</pre>
+          </div>
+
+          <div class="stack" id="user-keys-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="static/users.js"></script>
+  </body>
+</html>
