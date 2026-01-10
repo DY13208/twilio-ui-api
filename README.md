@@ -243,8 +243,8 @@ sudo apt install -y python3 python3-venv python3-pip nginx
 ## 2. 部署代码并设置环境变量
 
 ```bash
-git clone <your-repo> /opt/twillio
-cd /opt/twillio
+git clone https://github.com/DY13208/twilio-ui-api.git
+cd /twilio-ui-api
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
