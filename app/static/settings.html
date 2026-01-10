@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>设置</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">设置</div>
+        <div class="subtitle">管理 SendGrid Webhook 日志控制项。</div>
+        <div class="header-links">
+          <a href="./" class="link">仪表盘</a>
+          <a href="api-docs" class="link">API 文档</a>
+          <a href="sms" class="link">短信</a>
+          <a href="keys" class="link">密钥</a>
+          <a href="users" class="link">用户</a>
+          <a href="logout" class="link">退出</a>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card">
+          <h2>SendGrid Webhook 日志</h2>
+          <label class="toggle">
+            <input id="sendgrid-log-enabled" type="checkbox" />
+            <span>启用日志记录</span>
+          </label>
+
+          <div class="field" style="margin-top: 16px;">
+            <label>保留最大行数</label>
+            <input
+              id="sendgrid-log-max-lines"
+              type="number"
+              min="1"
+              placeholder="例如：2000"
+            />
+            <div class="hint">仅保留最新的 N 条日志。</div>
+          </div>
+
+          <label class="toggle">
+            <input id="sendgrid-log-auto-close" type="checkbox" />
+            <span>达到限制时自动清理</span>
+          </label>
+
+          <button id="sendgrid-log-save" type="button" class="primary">
+            保存设置
+          </button>
+
+          <div class="row" style="margin-top: 12px;">
+            <button id="sendgrid-log-refresh" type="button" class="secondary small">
+              刷新
+            </button>
+          </div>
+
+          <div class="hint" id="sendgrid-log-path">
+            日志路径：未配置。
+          </div>
+        </section>
+      </main>
+    </div>
+    <div id="toast-container" class="toast-container"></div>
+    <script src="static/settings.js"></script>
+  </body>
+</html>

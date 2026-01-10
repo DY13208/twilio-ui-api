@@ -86,6 +86,15 @@ class AdminSession(Base):
     expires_at = Column(DateTime, nullable=False)
 
 
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key = Column(String(128), primary_key=True)
+    value = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class SmsTemplate(Base):
     __tablename__ = "sms_templates"
 

@@ -57,6 +57,8 @@ class Settings:
     sendgrid_api_key: Optional[str]
     sendgrid_from_email: Optional[str]
     sendgrid_from_name: Optional[str]
+    sendgrid_reply_to: Optional[str]
+    sendgrid_reply_to_name: Optional[str]
     sendgrid_event_webhook_verify: bool
     sendgrid_event_webhook_public_key: Optional[str]
     sms_default_country_code: Optional[str]
@@ -87,6 +89,8 @@ settings = Settings(
     sendgrid_api_key=os.getenv("SENDGRID_API_KEY"),
     sendgrid_from_email=os.getenv("SENDGRID_FROM_EMAIL"),
     sendgrid_from_name=os.getenv("SENDGRID_FROM_NAME"),
+    sendgrid_reply_to=os.getenv("SENDGRID_REPLY_TO"),
+    sendgrid_reply_to_name=os.getenv("SENDGRID_REPLY_TO_NAME"),
     sendgrid_event_webhook_verify=_get_bool("SENDGRID_EVENT_WEBHOOK_VERIFY", False),
     sendgrid_event_webhook_public_key=os.getenv("SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY"),
     sms_default_country_code=os.getenv("SMS_DEFAULT_COUNTRY_CODE", "86"),

@@ -146,6 +146,19 @@ class AdminUserListResponse(BaseModel):
     users: List[AdminUserItem]
 
 
+class SendgridWebhookLogSettings(BaseModel):
+    enabled: bool
+    max_lines: Optional[int] = None
+    auto_close: bool
+    path: Optional[str] = None
+
+
+class SendgridWebhookLogSettingsUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    max_lines: Optional[int] = None
+    auto_close: Optional[bool] = None
+
+
 class TwilioMessageStatus(BaseModel):
     sid: str
     status: Optional[str] = None

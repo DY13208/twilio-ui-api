@@ -215,6 +215,7 @@ curl -X POST http://localhost:8000/api/keys ^
 - **Twilio SMS inbound**: configure the incoming message webhook to `PUBLIC_BASE_URL/webhooks/twilio/sms/inbound`.
 - **SendGrid**: configure Event Webhook to `PUBLIC_BASE_URL/webhooks/sendgrid`.
 - **SendGrid Inbound Parse**: configure Inbound Parse to `PUBLIC_BASE_URL/webhooks/sendgrid/inbound`.
+  Set `SENDGRID_REPLY_TO` to an address in the Inbound Parse receiving domain if you keep MX on the primary domain.
 
 If you enable signature verification:
 

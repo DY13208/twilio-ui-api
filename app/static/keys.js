@@ -496,7 +496,6 @@ newKeyCreateBtn.addEventListener("click", createKey);
 if (adminUserSaveBtn) {
   adminUserSaveBtn.addEventListener("click", saveAdminUser);
 }
-
 newKeyCopyBtn.addEventListener("click", async () => {
   if (!lastCreatedKey) {
     showToast("暂无新 Key。", "error");

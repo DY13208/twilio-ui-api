@@ -2,7 +2,9 @@ from datetime import datetime, timedelta
 from email.utils import getaddresses
 import base64
 import csv
+import html as html_lib
 import io
+import os
 import random
 import re
 import threading
@@ -29,6 +31,7 @@ from app.models import (
     AdminSession,
     AdminUser,
     ApiKey,
+    AppSetting,
     Base,
     EmailSender,
     Message,
@@ -63,6 +66,8 @@ from app.schemas import (
     MarkReadRequest,
     MarkReadResponse,
     MessageStatus,
+    SendgridWebhookLogSettings,
+    SendgridWebhookLogSettingsUpdate,
     SendResponse,
     SendResult,
     SmsTemplateCreate,
@@ -140,6 +145,10 @@ ADMIN_COOKIE_NAME = "admin_session"
 API_KEY_HEADER = "X-API-Key"
 ADMIN_TOKEN_HEADER = "Authorization"
 ADMIN_TOKEN_PREFIX = "Bearer "
+SENDGRID_LOG_ENABLED_KEY = "sendgrid_webhook_log_enabled"
+SENDGRID_LOG_MAX_LINES_KEY = "sendgrid_webhook_log_max_lines"
+SENDGRID_LOG_AUTO_CLOSE_KEY = "sendgrid_webhook_log_auto_close"
+_sendgrid_webhook_log_lock = threading.Lock()
 
 
 @app.on_event("startup")
@@ -175,6 +184,13 @@ def users_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     if not _get_admin_session(request, db):
         return RedirectResponse(url=_login_redirect_path(request))
     return FileResponse(static_dir / "users.html", media_type="text/html; charset=utf-8")
+
+
+@app.get("/settings", response_class=FileResponse)
+def settings_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
+    if not _get_admin_session(request, db):
+        return RedirectResponse(url=_login_redirect_path(request))
+    return FileResponse(static_dir / "settings.html", media_type="text/html; charset=utf-8")
 
 
 @app.get("/api-docs", response_class=FileResponse)
@@ -1133,6 +1149,40 @@ def delete_admin_user(
     return item
 
 
+@app.get(
+    "/api/admin/settings/sendgrid-webhook-log",
+    response_model=SendgridWebhookLogSettings,
+)
+def get_sendgrid_webhook_log_settings(
+    db: Session = Depends(get_db),
+    _: AdminSession = Depends(_require_admin_api),
+) -> SendgridWebhookLogSettings:
+    return _get_sendgrid_log_settings(db)
+
+
+@app.patch(
+    "/api/admin/settings/sendgrid-webhook-log",
+    response_model=SendgridWebhookLogSettings,
+)
+def update_sendgrid_webhook_log_settings(
+    payload: SendgridWebhookLogSettingsUpdate,
+    db: Session = Depends(get_db),
+    _: AdminSession = Depends(_require_admin_api),
+) -> SendgridWebhookLogSettings:
+    updates: Dict[str, Optional[str]] = {}
+    if payload.enabled is not None:
+        updates[SENDGRID_LOG_ENABLED_KEY] = "true" if payload.enabled else "false"
+    if _field_is_set(payload, "max_lines"):
+        updates[SENDGRID_LOG_MAX_LINES_KEY] = (
+            str(payload.max_lines) if payload.max_lines and payload.max_lines > 0 else None
+        )
+    if payload.auto_close is not None:
+        updates[SENDGRID_LOG_AUTO_CLOSE_KEY] = "true" if payload.auto_close else "false"
+    if updates:
+        _set_setting_values(db, updates)
+    return _get_sendgrid_log_settings(db)
+
+
 def _normalize_whatsapp_sender(value: str) -> str:
     cleaned = value.strip()
     if not cleaned:
@@ -1152,6 +1202,126 @@ def _normalize_email_sender(value: str) -> str:
     if not cleaned:
         raise HTTPException(status_code=400, detail="from_email is required")
     return cleaned.lower()
+
+
+def _text_to_html(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    escaped = html_lib.escape(normalized)
+    escaped = escaped.replace("\n", "<br>")
+    return f"<html><body>{escaped}</body></html>"
+
+
+def _get_setting_value(db: Session, key: str) -> Optional[str]:
+    record = db.query(AppSetting).filter(AppSetting.key == key).first()
+    return record.value if record else None
+
+
+def _set_setting_values(db: Session, values: Dict[str, Optional[str]]) -> None:
+    now = datetime.utcnow()
+    for key, value in values.items():
+        record = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if value is None:
+            if record:
+                db.delete(record)
+            continue
+        if record:
+            record.value = value
+            record.updated_at = now
+        else:
+            db.add(
+                AppSetting(
+                    key=key,
+                    value=value,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+    db.commit()
+
+
+def _parse_setting_bool(value: Optional[str]) -> Optional[bool]:
+    if value is None:
+        return None
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_setting_int(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _field_is_set(payload: Any, name: str) -> bool:
+    if hasattr(payload, "model_fields_set"):
+        return name in payload.model_fields_set
+    if hasattr(payload, "__fields_set__"):
+        return name in payload.__fields_set__
+    return False
+
+
+def _get_sendgrid_log_settings(db: Session) -> SendgridWebhookLogSettings:
+    log_path_raw = (os.getenv("SENDGRID_WEBHOOK_LOG_PATH") or "").strip()
+    log_path = log_path_raw or None
+    enabled_raw = _get_setting_value(db, SENDGRID_LOG_ENABLED_KEY)
+    enabled = _parse_setting_bool(enabled_raw)
+    if enabled is None:
+        enabled = bool(log_path)
+    max_lines = _parse_setting_int(_get_setting_value(db, SENDGRID_LOG_MAX_LINES_KEY))
+    auto_close_raw = _get_setting_value(db, SENDGRID_LOG_AUTO_CLOSE_KEY)
+    auto_close = _parse_setting_bool(auto_close_raw)
+    if auto_close is None:
+        auto_close = False
+    return SendgridWebhookLogSettings(
+        enabled=enabled,
+        max_lines=max_lines,
+        auto_close=auto_close,
+        path=log_path,
+    )
+
+
+def _trim_log_file(log_path: Path, max_lines: int) -> int:
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return 0
+    lines = content.splitlines()
+    if len(lines) <= max_lines:
+        return len(lines)
+    lines = lines[-max_lines:]
+    log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return len(lines)
+
+
+def _append_sendgrid_webhook_log(
+    db: Session, payload: bytes, signature: str, timestamp: str
+) -> None:
+    try:
+        log_settings = _get_sendgrid_log_settings(db)
+        if not log_settings.enabled or not log_settings.path:
+            return
+        log_path = Path(log_settings.path)
+        entry = {
+            "received_at": f"{datetime.utcnow().isoformat()}Z",
+            "signature": signature,
+            "timestamp": timestamp,
+            "payload": payload.decode("utf-8", errors="replace"),
+        }
+        with _sendgrid_webhook_log_lock:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=True) + "\n")
+            if log_settings.max_lines:
+                line_count = _trim_log_file(log_path, log_settings.max_lines)
+                if log_settings.auto_close and line_count >= log_settings.max_lines:
+                    _set_setting_values(db, {SENDGRID_LOG_ENABLED_KEY: "false"})
+    except Exception:
+        return
 
 
 def _normalize_sms_phone(value: str) -> str:
@@ -1368,6 +1538,20 @@ def _extract_sendgrid_message_id(headers: Optional[str]) -> Optional[str]:
     for line in headers.splitlines():
         if line.lower().startswith("message-id:"):
             return line.split(":", 1)[1].strip().strip("<>")
+    return None
+
+
+def _extract_sendgrid_local_id(event: Any) -> Optional[str]:
+    if not isinstance(event, dict):
+        return None
+    local_id = event.get("local_message_id")
+    if isinstance(local_id, (int, str)):
+        return str(local_id)
+    custom_args = event.get("custom_args") or event.get("unique_args") or {}
+    if isinstance(custom_args, dict):
+        local_id = custom_args.get("local_message_id")
+        if isinstance(local_id, (int, str)):
+            return str(local_id)
     return None
 
 
@@ -1868,6 +2052,10 @@ def send_email(
     if not sender:
         raise HTTPException(status_code=400, detail="SENDGRID_FROM_EMAIL is not configured")
 
+    html_payload = request.html
+    if not html_payload and request.text:
+        html_payload = _text_to_html(request.text)
+
     for recipient in request.recipients:
         message = Message(
             batch_id=batch_id,
@@ -1891,7 +2079,7 @@ def send_email(
                 to_email=recipient,
                 subject=request.subject,
                 text=request.text,
-                html=request.html,
+                html=html_payload,
                 custom_args=custom_args,
                 from_email=sender.from_email,
                 from_name=sender.from_name,
@@ -3507,6 +3695,7 @@ async def sendgrid_webhook(request: Request, db: Session = Depends(get_db)) -> J
     payload = await request.body()
     signature = request.headers.get("X-Twilio-Email-Event-Webhook-Signature", "")
     timestamp = request.headers.get("X-Twilio-Email-Event-Webhook-Timestamp", "")
+    _append_sendgrid_webhook_log(db, payload, signature, timestamp)
 
     if settings.sendgrid_event_webhook_verify:
         if not settings.sendgrid_event_webhook_public_key:
@@ -3527,8 +3716,10 @@ async def sendgrid_webhook(request: Request, db: Session = Depends(get_db)) -> J
 
     updated = 0
     for event in events:
-        custom_args = event.get("custom_args") or {}
-        local_id = custom_args.get("local_message_id")
+        if not isinstance(event, dict):
+            continue
+        custom_args = event.get("custom_args") or event.get("unique_args") or {}
+        local_id = _extract_sendgrid_local_id(event)
         status = event.get("event")
         sg_message_id = event.get("sg_message_id")
         reason = event.get("reason") or event.get("response")

@@ -22,6 +22,15 @@ class SendGridService:
             return Email(email, name)
         return Email(email)
 
+    def _reply_to_email(self) -> Optional[Email]:
+        reply_to = (settings.sendgrid_reply_to or "").strip()
+        if not reply_to:
+            return None
+        name = (settings.sendgrid_reply_to_name or "").strip()
+        if name:
+            return Email(reply_to, name)
+        return Email(reply_to)
+
     def send_email(
         self,
         to_email: str,
@@ -35,6 +44,9 @@ class SendGridService:
         mail = Mail()
         mail.from_email = self._from_email(from_email, from_name)
         mail.subject = subject
+        reply_to = self._reply_to_email()
+        if reply_to:
+            mail.reply_to = reply_to
 
         if html:
             if text:
