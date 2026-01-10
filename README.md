@@ -106,7 +106,7 @@ API Key 权限（scope）：
 
 ---
 
-## API 列表（保持原样，仅文案翻译）
+## API 列表
 
 ```
 POST /api/send/email
