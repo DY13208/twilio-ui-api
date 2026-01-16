@@ -42,6 +42,12 @@ body {
   animation: float-in 0.7s ease-out;
 }
 
+.header-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
 .brand {
   font-size: 36px;
   font-weight: 600;
@@ -92,6 +98,253 @@ body {
 
 .card.wide {
   grid-column: 1 / -1;
+}
+
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.tab-button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 10px 18px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: rgba(10, 123, 90, 0.4);
+  box-shadow: 0 10px 18px rgba(10, 123, 90, 0.2);
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+.guide-popover {
+  display: none;
+}
+
+.guide-popover.show {
+  display: block;
+}
+
+.guide-popover-card {
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  max-width: 360px;
+}
+
+.guide-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.tab-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.table-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.table-scroll {
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.6);
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table thead th {
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.data-table tbody tr.data-row {
+  background: rgba(255, 255, 255, 0.86);
+  cursor: pointer;
+}
+
+.data-table tbody tr.data-row:hover {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.data-table tbody tr.details-row td {
+  background: rgba(10, 123, 90, 0.08);
+}
+
+.table-icon {
+  width: 42px;
+}
+
+.row-toggle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+
+.cell-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.cell-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.detail-item {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.detail-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.detail-value {
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 15, 15, 0.45);
+  z-index: 10000;
+}
+
+.modal.show {
+  display: flex;
+}
+
+.modal-card {
+  width: min(760px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.modal-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.stepper-item {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.stepper-item.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: rgba(10, 123, 90, 0.4);
+}
+
+.wizard-step {
+  display: none;
+}
+
+.wizard-step.active {
+  display: block;
+}
+
+.wizard-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  flex-wrap: wrap;
 }
 
 .divider {

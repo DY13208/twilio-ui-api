@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.models import ApiKey, Customer, Message, WhatsAppSender
+from app.models import ApiKey, CampaignStepExecution, Customer, Message, WhatsAppSender
 from app.schemas import (
     SendResponse,
     SendResult,
@@ -118,6 +118,19 @@ def send_whatsapp_outbound(
 
     message.updated_at = datetime.utcnow()
     db.add(message)
+
+    if marketing_campaign_id and campaign_step_id and customer_id:
+        execution = CampaignStepExecution(
+            campaign_id=marketing_campaign_id,
+            step_id=campaign_step_id,
+            customer_id=customer_id,
+            channel="WHATSAPP",
+            status=message.status,
+            message_id=message.id,
+            created_at=now,
+            updated_at=message.updated_at,
+        )
+        db.add(execution)
 
     if customer_id:
         customer = db.query(Customer).filter(Customer.id == customer_id).first()

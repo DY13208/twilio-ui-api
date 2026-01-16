@@ -269,6 +269,32 @@ class CampaignStep(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class CampaignStepExecution(Base):
+    __tablename__ = "campaign_step_executions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(Integer, index=True, nullable=False)
+    step_id = Column(Integer, index=True, nullable=False)
+    customer_id = Column(Integer, index=True, nullable=False)
+    channel = Column(String(16), nullable=False)
+    status = Column(String(32), nullable=False, default="queued")
+    message_id = Column(Integer, index=True)
+    note = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MarketingCustomerState(Base):
+    __tablename__ = "marketing_customer_states"
+
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(Integer, index=True, nullable=False)
+    customer_id = Column(Integer, index=True, nullable=False)
+    status = Column(String(16), nullable=False, default="ACTIVE")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class SmsKeywordRule(Base):
     __tablename__ = "sms_keyword_rules"
 

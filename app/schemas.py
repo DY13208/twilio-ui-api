@@ -261,6 +261,65 @@ class CampaignStepListResponse(BaseModel):
     steps: List[CampaignStepItem]
 
 
+class CampaignStepExecutionCreate(BaseModel):
+    step_id: int
+    customer_id: int
+    channel: Optional[str] = None
+    status: Optional[str] = None
+    message_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class CampaignStepExecutionUpdate(BaseModel):
+    status: Optional[str] = None
+    message_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class CampaignStepExecutionItem(BaseModel):
+    id: int
+    campaign_id: int
+    step_id: int
+    customer_id: int
+    channel: str
+    status: str
+    message_id: Optional[int] = None
+    note: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CampaignStepExecutionListResponse(BaseModel):
+    executions: List[CampaignStepExecutionItem]
+
+
+class MarketingCustomerProgressItem(BaseModel):
+    customer_id: int
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    whatsapp: Optional[str] = None
+    mobile: Optional[str] = None
+    last_step_id: Optional[int] = None
+    last_step_order: Optional[int] = None
+    last_step_channel: Optional[str] = None
+    last_message_status: Optional[str] = None
+    last_message_at: Optional[datetime] = None
+    paused: bool
+
+
+class MarketingCustomerProgressResponse(BaseModel):
+    campaign_id: int
+    total: int
+    customers: List[MarketingCustomerProgressItem]
+
+
+class MarketingCustomerStateItem(BaseModel):
+    campaign_id: int
+    customer_id: int
+    status: str
+    updated_at: datetime
+
+
 class MessageTemplateCreate(BaseModel):
     channel: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)

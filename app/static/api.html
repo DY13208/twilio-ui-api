@@ -13,6 +13,7 @@
         <div class="subtitle">接口说明、参数与注意事项。</div>
         <div class="header-links">
           <a href="./" class="link">返回控制台</a>
+          <a href="marketing" class="link">智能营销</a>
           <a href="marketing-guide" class="link">智能营销指南</a>
           <a href="sms" class="link">短信营销</a>
           <a href="keys" class="link">Key 管理</a>
@@ -191,8 +192,9 @@
           <p><code>PATCH /api/marketing/campaigns/{campaign_id}</code> 更新计划。</p>
           <p><code>POST /api/marketing/campaigns/{campaign_id}/start</code> 启动计划。</p>
           <p><code>POST /api/marketing/campaigns/{campaign_id}/stop</code> 停止计划。</p>
+          <p><code>DELETE /api/marketing/campaigns/{campaign_id}</code> 删除计划。</p>
           <ul>
-            <li>状态：DRAFT / RUNNING / FINISHED / STOPPED。</li>
+            <li>状态：DRAFT / RUNNING / COMPLETED / STOPPED。</li>
             <li>filter_rules 支持 country / country_code / tags / has_marketed / last_email_status 等。</li>
           </ul>
         </section>
@@ -210,6 +212,13 @@
   "subject": "Checking in",
   "content": "Hi {{name}}"
 }</pre>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/steps/batch</code> 批量创建步骤。</p>
+          <pre>{
+  "steps": [
+    {"order_no": 1, "channel": "EMAIL", "delay_days": 0},
+    {"order_no": 2, "channel": "WHATSAPP", "delay_days": 7}
+  ]
+}</pre>
           <p><code>PATCH /api/marketing/campaigns/{campaign_id}/steps/{step_id}</code> 更新步骤。</p>
           <p><code>DELETE /api/marketing/campaigns/{campaign_id}/steps/{step_id}</code> 删除步骤。</p>
           <ul>
@@ -217,6 +226,35 @@
             <li>支持：email_opened_within_days / email_replied_within_days / email_not_replied_within_days。</li>
             <li>WhatsApp 可用 content_sid + content_variables（content_sid 来自 <code>/api/whatsapp/templates</code>）。</li>
             <li>template_id 来自本地模板接口 <code>/api/templates</code>；SMS 步骤暂仅记录。</li>
+          </ul>
+        </section>
+
+        <section class="card docs">
+          <h2>步骤执行详情（Step Executions）</h2>
+          <p><code>GET /api/marketing/campaigns/{campaign_id}/executions</code> 获取执行详情列表。</p>
+          <p>支持参数：<code>step_id</code> / <code>customer_id</code> / <code>status</code> / <code>limit</code> / <code>offset</code></p>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/executions</code> 新增执行记录。</p>
+          <pre>{
+  "step_id": 1,
+  "customer_id": 12,
+  "status": "sent",
+  "message_id": 999,
+  "note": "manual fix"
+}</pre>
+          <p><code>PATCH /api/marketing/campaigns/{campaign_id}/executions/{execution_id}</code> 更新执行记录。</p>
+          <p><code>DELETE /api/marketing/campaigns/{campaign_id}/executions/{execution_id}</code> 删除执行记录。</p>
+          <ul>
+            <li>系统发送时会自动写入执行记录。</li>
+          </ul>
+        </section>
+
+        <section class="card docs">
+          <h2>客户进度（Campaign Customers）</h2>
+          <p><code>GET /api/marketing/campaigns/{campaign_id}/customers/progress</code> 获取已营销客户最新步骤。</p>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/customers/{customer_id}/pause</code> 暂停该客户。</p>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/customers/{customer_id}/resume</code> 恢复该客户。</p>
+          <ul>
+            <li>暂停后调度器会跳过该客户。</li>
           </ul>
         </section>
 
@@ -347,7 +385,7 @@
 
       <section class="card docs">
         <h2>关键词与退订</h2>
-        <p><code>GET/POST/PATCH/DELETE /api/sms/keywords</code> 关键词自动回复规则。</p>
+        <p><code>GET/POST/PATCH/DELETE /api/sms/keyword-rules</code> 关键词自动回复规则。</p>
         <p><code>GET/POST/DELETE /api/sms/opt-outs</code> 退订名单。</p>
         <p><code>GET/POST/DELETE /api/sms/blacklist</code> 黑名单。</p>
       </section>
@@ -357,8 +395,8 @@
         <p><code>GET /api/status/{message_id}</code> 查询单条消息状态。</p>
         <p><code>GET /api/status/twilio/{message_sid}</code> 直接从 Twilio 查询消息状态（可选参数 <code>use_proxy</code>）。</p>
         <p><code>GET /api/batch/{batch_id}</code> 查询批次消息列表。</p>
-        <p><code>GET /api/users</code> 分页查询有聊天记录的用户列表（包含回复）。</p>
-        <pre>GET /api/users?channel=whatsapp&amp;created_from=2025-01-01T00:00:00&amp;limit=50&amp;offset=0</pre>
+        <p><code>GET /api/chat/users</code> 分页查询有聊天记录的用户列表（包含回复）。</p>
+        <pre>GET /api/chat/users?channel=whatsapp&amp;created_from=2025-01-01T00:00:00&amp;limit=50&amp;offset=0</pre>
         <ul>
           <li><code>channel</code>：可选，<code>email</code> / <code>whatsapp</code> / <code>sms</code>。</li>
           <li><code>created_from</code>/<code>created_to</code>：可选，ISO8601 时间范围。</li>

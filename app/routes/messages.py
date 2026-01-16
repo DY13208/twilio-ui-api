@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import ApiKey, Message
+from app.services.twilio_client import normalize_whatsapp
 from app.schemas import (
     ChatHistoryResponse,
     ChatMessage,
@@ -64,6 +65,60 @@ def _message_to_chat(message: Message) -> ChatMessage:
     )
 
 
+def _user_address_expr():
+    return case(
+        (Message.direction == "inbound", Message.from_address),
+        else_=Message.to_address,
+    )
+
+
+def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _load_chat_history(
+    db: Session,
+    address: str,
+    channel: Optional[str],
+    limit: int,
+    offset: int,
+) -> ChatHistoryResponse:
+    cleaned_user = address.strip()
+    normalized_user = None
+    if cleaned_user and "@" not in cleaned_user:
+        normalized_user = normalize_whatsapp(cleaned_user)
+
+    base_filter = (Message.to_address == cleaned_user) | (
+        Message.from_address == cleaned_user
+    )
+    if normalized_user and normalized_user != cleaned_user:
+        base_filter = base_filter | (
+            (Message.channel == "whatsapp")
+            & (
+                (Message.to_address == normalized_user)
+                | (Message.from_address == normalized_user)
+            )
+        )
+
+    query = db.query(Message).filter(base_filter)
+    if channel:
+        query = query.filter(Message.channel == channel)
+
+    total = query.count()
+    unread_count = query.filter(Message.read_at.is_(None)).count()
+    messages = query.order_by(Message.created_at.desc()).offset(offset).limit(limit).all()
+    return ChatHistoryResponse(
+        messages=[_message_to_chat(m) for m in reversed(messages)],
+        total=total,
+        unread_count=unread_count,
+    )
+
+
 @router.get("/api/messages", response_model=List[MessageStatus])
 def list_messages(
     batch_id: Optional[str] = None,
@@ -116,42 +171,79 @@ def get_batch_messages(
 
 
 @router.get("/api/chat/users", response_model=UserListResponse)
+@router.get("/api/users", response_model=UserListResponse)
 def list_chat_users(
     channel: Optional[str] = None,
+    created_from: Optional[str] = None,
+    created_to: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
     _: ApiKey = Depends(require_api_key("read")),
 ) -> UserListResponse:
     """List users with message stats for chat view."""
-    query = db.query(
-        case((Message.direction == "inbound", Message.from_address), else_=Message.to_address).label("address"),
-        Message.channel,
-        func.count(Message.id).label("total_count"),
-        func.sum(case((Message.direction == "inbound", 1), else_=0)).label("inbound_count"),
-        func.sum(case((Message.direction == "outbound", 1), else_=0)).label("outbound_count"),
-        func.sum(case((Message.read_at.is_(None) & (Message.direction == "inbound"), 1), else_=0)).label("unread_count"),
-        func.max(Message.created_at).label("last_message_at"),
-    ).group_by("address", Message.channel)
-    
+    from_datetime = _parse_datetime(created_from)
+    to_datetime = _parse_datetime(created_to)
+
+    user_address_expr = _user_address_expr().label("user_address")
+    base_query = db.query(user_address_expr)
+
     if channel:
-        query = query.filter(Message.channel == channel)
-    
-    results = query.order_by(func.max(Message.created_at).desc()).offset(offset).limit(limit).all()
-    
-    users = [
-        UserMessageStats(
-            address=r.address,
-            channel=r.channel,
-            total_count=r.total_count,
-            inbound_count=r.inbound_count,
-            outbound_count=r.outbound_count,
-            unread_count=r.unread_count,
-            last_message_at=r.last_message_at,
+        base_query = base_query.filter(Message.channel == channel)
+    if from_datetime:
+        base_query = base_query.filter(Message.created_at >= from_datetime)
+    if to_datetime:
+        base_query = base_query.filter(Message.created_at <= to_datetime)
+    base_query = base_query.filter(user_address_expr.isnot(None), user_address_expr != "")
+
+    distinct_users = base_query.distinct().all()
+    total_users = len(distinct_users)
+    paginated_users = distinct_users[offset : offset + limit]
+
+    user_stats_list = []
+    for (user_address,) in paginated_users:
+        user_filter = (Message.to_address == user_address) | (
+            Message.from_address == user_address
         )
-        for r in results
-    ]
-    return UserListResponse(users=users)
+        user_query = db.query(Message).filter(user_filter)
+
+        if channel:
+            user_query = user_query.filter(Message.channel == channel)
+        if from_datetime:
+            user_query = user_query.filter(Message.created_at >= from_datetime)
+        if to_datetime:
+            user_query = user_query.filter(Message.created_at <= to_datetime)
+
+        total_messages = user_query.count()
+        unread_count = user_query.filter(Message.read_at.is_(None)).count()
+
+        last_message = user_query.order_by(Message.created_at.desc()).first()
+        last_message_at = last_message.created_at if last_message else None
+
+        channels_query = db.query(Message.channel).filter(user_filter).distinct()
+        if channel:
+            channels_query = channels_query.filter(Message.channel == channel)
+        if from_datetime:
+            channels_query = channels_query.filter(Message.created_at >= from_datetime)
+        if to_datetime:
+            channels_query = channels_query.filter(Message.created_at <= to_datetime)
+
+        channels = [ch[0] for ch in channels_query.all()]
+
+        user_stats_list.append(
+            UserMessageStats(
+                user_address=user_address,
+                total_messages=total_messages,
+                unread_count=unread_count,
+                last_message_at=last_message_at,
+                channels=channels,
+            )
+        )
+
+    user_stats_list.sort(
+        key=lambda item: item.last_message_at or datetime.min, reverse=True
+    )
+    return UserListResponse(users=user_stats_list, total=total_users)
 
 
 @router.get("/api/chat/history", response_model=ChatHistoryResponse)
@@ -164,13 +256,20 @@ def get_chat_history(
     _: ApiKey = Depends(require_api_key("read")),
 ) -> ChatHistoryResponse:
     """Get chat history with a specific user/address."""
-    query = db.query(Message).filter(
-        (Message.to_address == address) | (Message.from_address == address)
-    )
-    if channel:
-        query = query.filter(Message.channel == channel)
-    messages = query.order_by(Message.created_at.desc()).offset(offset).limit(limit).all()
-    return ChatHistoryResponse(messages=[_message_to_chat(m) for m in reversed(messages)])
+    return _load_chat_history(db, address, channel, limit, offset)
+
+
+@router.get("/api/chat/{user_address}", response_model=ChatHistoryResponse)
+def get_chat_history_by_address(
+    user_address: str,
+    channel: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> ChatHistoryResponse:
+    """Compatibility alias for chat history by address."""
+    return _load_chat_history(db, user_address, channel, limit, offset)
 
 
 @router.post("/api/chat/mark-read", response_model=MarkReadResponse)

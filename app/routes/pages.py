@@ -63,6 +63,13 @@ def marketing_guide(request: Request, db: Session = Depends(get_db)) -> FileResp
     )
 
 
+@router.get("/marketing", response_class=FileResponse)
+def marketing_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
+    if not get_admin_session(request, db):
+        return RedirectResponse(url=login_redirect_path(request))
+    return FileResponse(static_dir / "marketing.html", media_type="text/html; charset=utf-8")
+
+
 @router.get("/chat", response_class=FileResponse)
 def chat_page(request: Request, db: Session = Depends(get_db)) -> FileResponse:
     if not get_admin_session(request, db):

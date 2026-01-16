@@ -522,7 +522,7 @@ async function loadUserList(reset = true) {
       params.set("created_to", toValue);
     }
 
-    const response = await apiFetch(`api/users?${params.toString()}`);
+    const response = await apiFetch(`api/chat/users?${params.toString()}`);
     const data = await response.json();
 
     if (!response.ok) {

@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智能营销控制台</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">智能营销控制台</div>
+        <div class="subtitle">用表格视图统一管理营销计划、执行细节与客户进度。</div>
+        <div class="header-links">
+          <a href="./" class="link">控制台</a>
+          <a href="chat" class="link">聊天记录</a>
+          <a href="sms" class="link">短信营销</a>
+          <a href="api-docs" class="link">API 文档</a>
+          <a href="keys" class="link">Key 管理</a>
+          <a href="users" class="link">用户管理</a>
+          <a href="settings" class="link">设置</a>
+          <a href="logout" class="link">退出</a>
+        </div>
+        <div class="header-actions">
+          <button id="marketing-guide-btn" type="button" class="secondary small">
+            智能营销指南
+          </button>
+        </div>
+        <div class="guide-popover" id="marketing-guide-popover">
+          <div class="guide-popover-card">
+            <div class="guide-title">智能营销指南</div>
+            <p>完整指南请查看。</p>
+            <div class="row">
+              <a href="marketing-guide" class="link" target="_blank" rel="noopener">
+                打开完整指南
+              </a>
+              <button id="marketing-guide-close" type="button" class="ghost small">
+                知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="tab-bar" role="tablist">
+        <button class="tab-button active" data-tab="campaigns" role="tab" aria-selected="true">
+          营销计划
+        </button>
+        <button class="tab-button" data-tab="steps" role="tab" aria-selected="false">
+          营销步骤
+        </button>
+        <button class="tab-button" data-tab="executions" role="tab" aria-selected="false">
+          执行详情
+        </button>
+        <button class="tab-button" data-tab="customers" role="tab" aria-selected="false">
+          客户进度
+        </button>
+      </div>
+
+      <section class="card tab-panel active" id="tab-campaigns">
+        <div class="tab-header">
+          <h2>营销计划</h2>
+          <button id="marketing-create-open" type="button" class="secondary">
+            新建营销计划
+          </button>
+        </div>
+        <div class="table-card">
+          <div class="table-toolbar">
+            <div class="row">
+              <input id="marketing-search" type="text" placeholder="计划名称" />
+              <select id="marketing-status-filter">
+                <option value="">全部状态</option>
+                <option value="DRAFT">草稿</option>
+                <option value="RUNNING">执行中</option>
+                <option value="COMPLETED">已完成</option>
+                <option value="STOPPED">已停止</option>
+                <option value="SCHEDULED">已排期</option>
+              </select>
+              <button id="marketing-refresh" type="button" class="secondary small">刷新</button>
+            </div>
+            <div class="hint">点击行可展开详情，操作列可直接管理。</div>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="table-icon"></th>
+                  <th>营销计划</th>
+                  <th>计划状态</th>
+                  <th>客户数</th>
+                  <th>发送数</th>
+                  <th>触达数</th>
+                  <th>互动数</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="marketing-table-body"></tbody>
+            </table>
+          </div>
+          <pre id="marketing-result">计划操作结果将显示在这里。</pre>
+        </div>
+      </section>
+
+      <section class="card tab-panel" id="tab-steps">
+        <div class="tab-header">
+          <h2>营销步骤</h2>
+          <button id="step-create-open" type="button" class="secondary">新增步骤</button>
+        </div>
+        <div class="table-card">
+          <div class="table-toolbar">
+            <div class="row">
+              <input id="step-filter-campaign-id" type="number" placeholder="计划 ID" />
+              <button id="step-refresh" type="button" class="secondary small">刷新</button>
+            </div>
+            <div class="hint">步骤按顺序执行，点击行查看内容与筛选规则。</div>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="table-icon"></th>
+                  <th>步骤</th>
+                  <th>渠道</th>
+                  <th>延迟</th>
+                  <th>模板</th>
+                  <th>主题/内容</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="step-table-body"></tbody>
+            </table>
+          </div>
+          <pre id="step-result">步骤操作结果将显示在这里。</pre>
+        </div>
+      </section>
+
+      <section class="card tab-panel" id="tab-executions">
+        <div class="tab-header">
+          <h2>步骤执行详情</h2>
+          <button id="execution-create-open" type="button" class="secondary">新增执行记录</button>
+        </div>
+        <div class="table-card">
+          <div class="table-toolbar">
+            <div class="row">
+              <input id="execution-filter-campaign-id" type="number" placeholder="计划 ID" />
+              <input id="execution-filter-step-id" type="number" placeholder="步骤 ID" />
+              <input id="execution-filter-customer-id" type="number" placeholder="客户 ID" />
+              <select id="execution-filter-status">
+                <option value="">全部状态</option>
+                <option value="queued">queued</option>
+                <option value="accepted">accepted</option>
+                <option value="sent">sent</option>
+                <option value="delivered">delivered</option>
+                <option value="failed">failed</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="execution-refresh" type="button" class="secondary small">刷新</button>
+            </div>
+            <div class="hint">执行详情记录每个客户步骤的发送状态。</div>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="table-icon"></th>
+                  <th>步骤</th>
+                  <th>客户</th>
+                  <th>渠道</th>
+                  <th>状态</th>
+                  <th>时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="execution-table-body"></tbody>
+            </table>
+          </div>
+          <pre id="execution-result">执行详情操作结果将显示在这里。</pre>
+        </div>
+      </section>
+
+      <section class="card tab-panel" id="tab-customers">
+        <div class="tab-header">
+          <h2>客户进度</h2>
+        </div>
+        <div class="table-card">
+          <div class="table-toolbar">
+            <div class="row">
+              <input id="progress-filter-campaign-id" type="number" placeholder="计划 ID" />
+              <button id="progress-refresh" type="button" class="secondary small">加载进度</button>
+            </div>
+            <div class="hint">展示已营销客户的最新步骤，可暂停/恢复。</div>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="table-icon"></th>
+                  <th>客户</th>
+                  <th>当前步骤</th>
+                  <th>渠道</th>
+                  <th>状态</th>
+                  <th>最近时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="progress-table-body"></tbody>
+            </table>
+          </div>
+          <pre id="progress-result">客户进度结果将显示在这里。</pre>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal" id="campaign-modal" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="campaign-modal-title">新建营销计划</div>
+          <button id="campaign-modal-close" type="button" class="ghost small">关闭</button>
+        </div>
+        <input id="campaign-wizard-id" type="hidden" />
+        <div class="stepper" id="campaign-stepper">
+          <div class="stepper-item active" data-step="0">1 基本信息</div>
+          <div class="stepper-item" data-step="1">2 执行方式</div>
+          <div class="stepper-item" data-step="2">3 客户范围</div>
+        </div>
+        <div class="wizard-step active" data-step="0">
+          <div class="field">
+            <label>计划名称</label>
+            <input id="wizard-name" type="text" placeholder="例如 新客户触达" />
+          </div>
+          <div class="field">
+            <label>计划类型</label>
+            <select id="wizard-type">
+              <option value="MIXED">混合</option>
+              <option value="EMAIL">邮件</option>
+              <option value="WHATSAPP">WhatsApp</option>
+              <option value="SMS">短信</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>创建人</label>
+            <input id="wizard-created-by" type="text" placeholder="创建人" />
+          </div>
+        </div>
+        <div class="wizard-step" data-step="1">
+          <div class="field">
+            <label>立即执行</label>
+            <label class="toggle">
+              <input id="wizard-run-immediately" type="checkbox" checked />
+              <span>启用</span>
+            </label>
+          </div>
+          <div class="field">
+            <label>定时执行</label>
+            <input id="wizard-schedule" type="datetime-local" />
+          </div>
+          <div class="hint">如果启用立即执行，将忽略定时执行。</div>
+        </div>
+        <div class="wizard-step" data-step="2">
+          <div class="field">
+            <label>客户 ID 列表</label>
+            <textarea id="wizard-customer-ids" rows="3" placeholder="1, 2, 3"></textarea>
+          </div>
+          <div class="field">
+            <label>客户筛选规则（JSON）</label>
+            <textarea
+              id="wizard-filter-rules"
+              rows="4"
+              placeholder='{"country":"US","tags":["OEM"]}'
+            ></textarea>
+          </div>
+          <div class="hint">customer_ids 与 filter_rules 可二选一或组合使用。</div>
+        </div>
+        <div class="wizard-actions">
+          <button id="campaign-prev" type="button" class="ghost small">上一步</button>
+          <button id="campaign-next" type="button" class="secondary small">下一步</button>
+          <button id="campaign-submit" type="button" class="primary small">创建计划</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="step-modal" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="step-modal-title">新增步骤</div>
+          <button id="step-modal-close" type="button" class="ghost small">关闭</button>
+        </div>
+        <input id="step-modal-id" type="hidden" />
+        <div class="field">
+          <label>计划 ID</label>
+          <input id="step-modal-campaign-id" type="number" placeholder="计划 ID" />
+        </div>
+        <div class="field">
+          <label>步骤顺序</label>
+          <input id="step-modal-order" type="number" min="1" placeholder="1" />
+        </div>
+        <div class="field">
+          <label>渠道</label>
+          <select id="step-modal-channel">
+            <option value="EMAIL">邮件</option>
+            <option value="WHATSAPP">WhatsApp</option>
+            <option value="SMS">短信</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>延迟天数</label>
+          <input id="step-modal-delay" type="number" min="0" placeholder="0" />
+        </div>
+        <div class="field">
+          <label>步骤筛选规则（JSON）</label>
+          <textarea
+            id="step-modal-filter-rules"
+            rows="3"
+            placeholder='{"prev_channel":"EMAIL","reply_status":"not_replied","within_days":7}'
+          ></textarea>
+        </div>
+        <div class="field">
+          <label>模板 ID</label>
+          <input id="step-modal-template-id" type="number" placeholder="模板 ID" />
+        </div>
+        <div class="field">
+          <label>主题</label>
+          <input id="step-modal-subject" type="text" placeholder="邮件主题" />
+        </div>
+        <div class="field">
+          <label>内容</label>
+          <textarea id="step-modal-content" rows="3" placeholder="消息内容"></textarea>
+        </div>
+        <div class="field">
+          <label>模板 SID</label>
+          <input id="step-modal-content-sid" type="text" placeholder="HX..." />
+        </div>
+        <div class="field">
+          <label>模板变量（JSON）</label>
+          <textarea id="step-modal-content-vars" rows="3" placeholder='{"1":"Alice"}'></textarea>
+        </div>
+        <div class="wizard-actions">
+          <button id="step-modal-submit" type="button" class="secondary">保存步骤</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="execution-modal" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="execution-modal-title">新增执行记录</div>
+          <button id="execution-modal-close" type="button" class="ghost small">关闭</button>
+        </div>
+        <input id="execution-modal-id" type="hidden" />
+        <div class="field">
+          <label>计划 ID</label>
+          <input id="execution-modal-campaign-id" type="number" placeholder="计划 ID" />
+        </div>
+        <div class="field">
+          <label>步骤 ID</label>
+          <input id="execution-modal-step-id" type="number" placeholder="步骤 ID" />
+        </div>
+        <div class="field">
+          <label>客户 ID</label>
+          <input id="execution-modal-customer-id" type="number" placeholder="客户 ID" />
+        </div>
+        <div class="field">
+          <label>渠道</label>
+          <select id="execution-modal-channel">
+            <option value="EMAIL">邮件</option>
+            <option value="WHATSAPP">WhatsApp</option>
+            <option value="SMS">短信</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>状态</label>
+          <select id="execution-modal-status">
+            <option value="queued">queued</option>
+            <option value="accepted">accepted</option>
+            <option value="sent">sent</option>
+            <option value="delivered">delivered</option>
+            <option value="failed">failed</option>
+            <option value="blocked">blocked</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>消息 ID（可选）</label>
+          <input id="execution-modal-message-id" type="number" placeholder="关联消息 ID" />
+        </div>
+        <div class="field">
+          <label>备注</label>
+          <textarea id="execution-modal-note" rows="3" placeholder="可选备注"></textarea>
+        </div>
+        <div class="wizard-actions">
+          <button id="execution-modal-submit" type="button" class="secondary">保存记录</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="static/marketing.js"></script>
+  </body>
+</html>

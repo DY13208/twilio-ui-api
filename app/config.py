@@ -61,6 +61,7 @@ class Settings:
     sendgrid_reply_to_name: Optional[str]
     sendgrid_event_webhook_verify: bool
     sendgrid_event_webhook_public_key: Optional[str]
+    sendgrid_webhook_log_path: Optional[str]
     sms_default_country_code: Optional[str]
     sms_append_opt_out: bool
     sms_opt_out_text: Optional[str]
@@ -97,6 +98,7 @@ settings = Settings(
     sendgrid_reply_to_name=os.getenv("SENDGRID_REPLY_TO_NAME"),
     sendgrid_event_webhook_verify=_get_bool("SENDGRID_EVENT_WEBHOOK_VERIFY", False),
     sendgrid_event_webhook_public_key=os.getenv("SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY"),
+    sendgrid_webhook_log_path=os.getenv("SENDGRID_WEBHOOK_LOG_PATH") or None,
     sms_default_country_code=os.getenv("SMS_DEFAULT_COUNTRY_CODE", "1"),
     sms_append_opt_out=_get_bool("SMS_APPEND_OPT_OUT", True),
     sms_opt_out_text=os.getenv("SMS_OPT_OUT_TEXT", "Reply T to unsubscribe."),

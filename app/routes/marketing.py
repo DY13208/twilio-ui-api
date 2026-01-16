@@ -11,7 +11,9 @@ from app.db import get_db
 from app.models import (
     ApiKey,
     CampaignStep,
+    CampaignStepExecution,
     Customer,
+    MarketingCustomerState,
     MarketingCampaign,
     Message,
     MessageTemplate,
@@ -19,12 +21,19 @@ from app.models import (
 from app.schemas import (
     CampaignStepBatchCreate,
     CampaignStepCreate,
+    CampaignStepExecutionCreate,
+    CampaignStepExecutionItem,
+    CampaignStepExecutionListResponse,
+    CampaignStepExecutionUpdate,
     CampaignStepItem,
     CampaignStepListResponse,
     CampaignStepUpdate,
     MarketingCampaignCreate,
     MarketingCampaignItem,
     MarketingCampaignListResponse,
+    MarketingCustomerProgressItem,
+    MarketingCustomerProgressResponse,
+    MarketingCustomerStateItem,
     MarketingCampaignUpdate,
 )
 from app.dependencies import require_api_key, ensure_sendgrid, ensure_twilio
@@ -89,6 +98,35 @@ def _campaign_step_to_item(step: CampaignStep) -> CampaignStepItem:
     )
 
 
+def _campaign_step_execution_to_item(
+    execution: CampaignStepExecution,
+) -> CampaignStepExecutionItem:
+    return CampaignStepExecutionItem(
+        id=execution.id,
+        campaign_id=execution.campaign_id,
+        step_id=execution.step_id,
+        customer_id=execution.customer_id,
+        channel=execution.channel,
+        status=execution.status,
+        message_id=execution.message_id,
+        note=execution.note,
+        created_at=execution.created_at,
+        updated_at=execution.updated_at,
+    )
+
+
+def _load_paused_customer_ids(db: Session, campaign_id: int) -> set:
+    states = (
+        db.query(MarketingCustomerState)
+        .filter(
+            MarketingCustomerState.campaign_id == campaign_id,
+            MarketingCustomerState.status == "PAUSED",
+        )
+        .all()
+    )
+    return {state.customer_id for state in states}
+
+
 def _marketing_campaign_to_item(
     campaign: MarketingCampaign, stats: Optional[Dict[str, int]] = None
 ) -> MarketingCampaignItem:
@@ -149,14 +187,19 @@ def dispatch_marketing_campaign(db: Session, campaign: MarketingCampaign, now: d
         customers = db.query(Customer).all()
     
     filter_rules = deserialize_json_dict(campaign.filter_rules)
-    customers = filter_customers_by_rules(customers, filter_rules)
-    
-    if not customers:
+    eligible_customers = filter_customers_by_rules(customers, filter_rules)
+
+    if not eligible_customers:
         campaign.status = "COMPLETED"
         campaign.completed_at = now
         campaign.updated_at = now
         db.add(campaign)
         db.commit()
+        return
+
+    paused_ids = _load_paused_customer_ids(db, campaign.id)
+    customers = [customer for customer in eligible_customers if customer.id not in paused_ids]
+    if not customers:
         return
 
     # Process first step for simplicity
@@ -317,6 +360,21 @@ def update_marketing_campaign(
     return _marketing_campaign_to_item(campaign)
 
 
+@router.delete("/api/marketing/campaigns/{campaign_id}", response_model=MarketingCampaignItem)
+def delete_marketing_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> MarketingCampaignItem:
+    campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    item = _marketing_campaign_to_item(campaign)
+    db.delete(campaign)
+    db.commit()
+    return item
+
+
 @router.post("/api/marketing/campaigns/{campaign_id}/start", response_model=MarketingCampaignItem)
 def start_marketing_campaign(
     campaign_id: int,
@@ -390,6 +448,49 @@ def create_campaign_step(
     return _campaign_step_to_item(step)
 
 
+@router.patch(
+    "/api/marketing/campaigns/{campaign_id}/steps/{step_id}",
+    response_model=CampaignStepItem,
+)
+def update_campaign_step(
+    campaign_id: int,
+    step_id: int,
+    payload: CampaignStepUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CampaignStepItem:
+    step = (
+        db.query(CampaignStep)
+        .filter(CampaignStep.id == step_id, CampaignStep.campaign_id == campaign_id)
+        .first()
+    )
+    if not step:
+        raise HTTPException(status_code=404, detail="campaign step not found")
+    if payload.order_no is not None:
+        step.order_no = payload.order_no
+    if payload.channel is not None:
+        step.channel = _normalize_step_channel(payload.channel)
+    if payload.delay_days is not None:
+        step.delay_days = payload.delay_days or 0
+    if payload.filter_rules is not None:
+        step.filter_rules = serialize_json_dict(payload.filter_rules)
+    if payload.template_id is not None:
+        step.template_id = payload.template_id
+    if payload.subject is not None:
+        step.subject = payload.subject
+    if payload.content is not None:
+        step.content = payload.content
+    if payload.content_sid is not None:
+        step.content_sid = payload.content_sid
+    if payload.content_variables is not None:
+        step.content_variables = serialize_json_dict(payload.content_variables)
+    step.updated_at = datetime.utcnow()
+    db.add(step)
+    db.commit()
+    db.refresh(step)
+    return _campaign_step_to_item(step)
+
+
 @router.post(
     "/api/marketing/campaigns/{campaign_id}/steps/batch",
     response_model=CampaignStepListResponse,
@@ -430,3 +531,303 @@ def delete_campaign_step(
     db.delete(step)
     db.commit()
     return item
+
+
+# Campaign step executions
+@router.get(
+    "/api/marketing/campaigns/{campaign_id}/executions",
+    response_model=CampaignStepExecutionListResponse,
+)
+def list_campaign_step_executions(
+    campaign_id: int,
+    step_id: Optional[int] = None,
+    customer_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> CampaignStepExecutionListResponse:
+    query = db.query(CampaignStepExecution).filter(
+        CampaignStepExecution.campaign_id == campaign_id
+    )
+    if step_id is not None:
+        query = query.filter(CampaignStepExecution.step_id == step_id)
+    if customer_id is not None:
+        query = query.filter(CampaignStepExecution.customer_id == customer_id)
+    if status:
+        query = query.filter(CampaignStepExecution.status == status)
+    executions = (
+        query.order_by(CampaignStepExecution.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return CampaignStepExecutionListResponse(
+        executions=[_campaign_step_execution_to_item(item) for item in executions]
+    )
+
+
+@router.post(
+    "/api/marketing/campaigns/{campaign_id}/executions",
+    response_model=CampaignStepExecutionItem,
+)
+def create_campaign_step_execution(
+    campaign_id: int,
+    payload: CampaignStepExecutionCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CampaignStepExecutionItem:
+    campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    step = (
+        db.query(CampaignStep)
+        .filter(CampaignStep.id == payload.step_id, CampaignStep.campaign_id == campaign_id)
+        .first()
+    )
+    if not step:
+        raise HTTPException(status_code=404, detail="campaign step not found")
+    customer = db.query(Customer).filter(Customer.id == payload.customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="customer not found")
+    channel = payload.channel or step.channel
+    channel = _normalize_step_channel(channel)
+    now = datetime.utcnow()
+    execution = CampaignStepExecution(
+        campaign_id=campaign_id,
+        step_id=payload.step_id,
+        customer_id=payload.customer_id,
+        channel=channel,
+        status=(payload.status or "queued").strip(),
+        message_id=payload.message_id,
+        note=payload.note,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(execution)
+    db.commit()
+    db.refresh(execution)
+    return _campaign_step_execution_to_item(execution)
+
+
+@router.patch(
+    "/api/marketing/campaigns/{campaign_id}/executions/{execution_id}",
+    response_model=CampaignStepExecutionItem,
+)
+def update_campaign_step_execution(
+    campaign_id: int,
+    execution_id: int,
+    payload: CampaignStepExecutionUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CampaignStepExecutionItem:
+    execution = (
+        db.query(CampaignStepExecution)
+        .filter(
+            CampaignStepExecution.id == execution_id,
+            CampaignStepExecution.campaign_id == campaign_id,
+        )
+        .first()
+    )
+    if not execution:
+        raise HTTPException(status_code=404, detail="campaign execution not found")
+    if payload.status is not None:
+        execution.status = payload.status
+    if payload.message_id is not None:
+        execution.message_id = payload.message_id
+    if payload.note is not None:
+        execution.note = payload.note
+    execution.updated_at = datetime.utcnow()
+    db.add(execution)
+    db.commit()
+    db.refresh(execution)
+    return _campaign_step_execution_to_item(execution)
+
+
+@router.delete(
+    "/api/marketing/campaigns/{campaign_id}/executions/{execution_id}",
+    response_model=CampaignStepExecutionItem,
+)
+def delete_campaign_step_execution(
+    campaign_id: int,
+    execution_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CampaignStepExecutionItem:
+    execution = (
+        db.query(CampaignStepExecution)
+        .filter(
+            CampaignStepExecution.id == execution_id,
+            CampaignStepExecution.campaign_id == campaign_id,
+        )
+        .first()
+    )
+    if not execution:
+        raise HTTPException(status_code=404, detail="campaign execution not found")
+    item = _campaign_step_execution_to_item(execution)
+    db.delete(execution)
+    db.commit()
+    return item
+
+
+# Campaign customer progress
+@router.get(
+    "/api/marketing/campaigns/{campaign_id}/customers/progress",
+    response_model=MarketingCustomerProgressResponse,
+)
+def get_campaign_customer_progress(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> MarketingCustomerProgressResponse:
+    campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+
+    steps = (
+        db.query(CampaignStep)
+        .filter(CampaignStep.campaign_id == campaign_id)
+        .order_by(CampaignStep.order_no)
+        .all()
+    )
+    step_order = {step.id: step.order_no for step in steps}
+    step_channel = {step.id: step.channel for step in steps}
+
+    messages = (
+        db.query(Message)
+        .filter(
+            Message.marketing_campaign_id == campaign_id,
+            Message.direction == "outbound",
+            Message.customer_id.isnot(None),
+        )
+        .order_by(Message.created_at.desc())
+        .all()
+    )
+
+    progress_map: Dict[int, Dict[str, Any]] = {}
+    for message in messages:
+        customer_id = message.customer_id
+        if not customer_id:
+            continue
+        order = step_order.get(message.campaign_step_id, 0)
+        current = progress_map.get(customer_id)
+        if current:
+            if order < current["order"]:
+                continue
+            if order == current["order"] and message.created_at <= current["last_message_at"]:
+                continue
+        progress_map[customer_id] = {
+            "step_id": message.campaign_step_id,
+            "order": order,
+            "channel": step_channel.get(message.campaign_step_id),
+            "status": message.status,
+            "last_message_at": message.created_at,
+        }
+
+    if not progress_map:
+        return MarketingCustomerProgressResponse(campaign_id=campaign_id, total=0, customers=[])
+
+    customer_ids = list(progress_map.keys())
+    customers = db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
+    customer_map = {customer.id: customer for customer in customers}
+    paused_ids = _load_paused_customer_ids(db, campaign_id)
+
+    items: List[MarketingCustomerProgressItem] = []
+    for customer_id, info in progress_map.items():
+        customer = customer_map.get(customer_id)
+        items.append(
+            MarketingCustomerProgressItem(
+                customer_id=customer_id,
+                name=customer.name if customer else None,
+                email=customer.email if customer else None,
+                whatsapp=customer.whatsapp if customer else None,
+                mobile=customer.mobile if customer else None,
+                last_step_id=info.get("step_id"),
+                last_step_order=info.get("order") or None,
+                last_step_channel=info.get("channel"),
+                last_message_status=info.get("status"),
+                last_message_at=info.get("last_message_at"),
+                paused=customer_id in paused_ids,
+            )
+        )
+
+    items.sort(
+        key=lambda item: item.last_message_at or datetime.min,
+        reverse=True,
+    )
+    return MarketingCustomerProgressResponse(
+        campaign_id=campaign_id, total=len(items), customers=items
+    )
+
+
+def _set_customer_state(
+    db: Session, campaign_id: int, customer_id: int, status: str
+) -> MarketingCustomerStateItem:
+    state = (
+        db.query(MarketingCustomerState)
+        .filter(
+            MarketingCustomerState.campaign_id == campaign_id,
+            MarketingCustomerState.customer_id == customer_id,
+        )
+        .first()
+    )
+    now = datetime.utcnow()
+    if state:
+        state.status = status
+        state.updated_at = now
+    else:
+        state = MarketingCustomerState(
+            campaign_id=campaign_id,
+            customer_id=customer_id,
+            status=status,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(state)
+    db.commit()
+    db.refresh(state)
+    return MarketingCustomerStateItem(
+        campaign_id=state.campaign_id,
+        customer_id=state.customer_id,
+        status=state.status,
+        updated_at=state.updated_at,
+    )
+
+
+@router.post(
+    "/api/marketing/campaigns/{campaign_id}/customers/{customer_id}/pause",
+    response_model=MarketingCustomerStateItem,
+)
+def pause_marketing_customer(
+    campaign_id: int,
+    customer_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> MarketingCustomerStateItem:
+    campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="customer not found")
+    return _set_customer_state(db, campaign_id, customer_id, "PAUSED")
+
+
+@router.post(
+    "/api/marketing/campaigns/{campaign_id}/customers/{customer_id}/resume",
+    response_model=MarketingCustomerStateItem,
+)
+def resume_marketing_customer(
+    campaign_id: int,
+    customer_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> MarketingCustomerStateItem:
+    campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="customer not found")
+    return _set_customer_state(db, campaign_id, customer_id, "ACTIVE")

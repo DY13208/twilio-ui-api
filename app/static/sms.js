@@ -1664,7 +1664,7 @@ function renderSmsKeywordList(rules) {
 
 async function loadSmsKeywordRules() {
   try {
-    const response = await apiFetch("api/sms/keywords");
+    const response = await apiFetch("api/sms/keyword-rules");
     const data = await readJson(response);
     if (!response.ok) {
       throw new Error(data.detail || "加载规则失败");
@@ -1706,7 +1706,7 @@ async function createSmsKeyword() {
     enabled: smsKeywordEnabledEl.checked,
   };
   try {
-    const response = await apiFetch("api/sms/keywords", {
+    const response = await apiFetch("api/sms/keyword-rules", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1742,7 +1742,7 @@ async function updateSmsKeyword() {
   payload.enabled = smsKeywordEnabledEl.checked;
 
   try {
-    const response = await apiFetch(`api/sms/keywords/${ruleId}`, {
+    const response = await apiFetch(`api/sms/keyword-rules/${ruleId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -1766,7 +1766,7 @@ async function deleteSmsKeyword(ruleId) {
     return;
   }
   try {
-    const response = await apiFetch(`api/sms/keywords/${targetId}`, {
+    const response = await apiFetch(`api/sms/keyword-rules/${targetId}`, {
       method: "DELETE",
     });
     const data = await readJson(response);

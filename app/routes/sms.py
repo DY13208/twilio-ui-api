@@ -14,6 +14,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import (
     ApiKey,
+    CampaignStepExecution,
     Customer,
     Message,
     SmsCampaign,
@@ -143,6 +144,18 @@ def _sms_campaign_to_item(campaign: SmsCampaign) -> SmsCampaignItem:
     )
 
 
+def _sms_keyword_rule_to_item(rule: SmsKeywordRule) -> SmsKeywordRuleItem:
+    return SmsKeywordRuleItem(
+        id=rule.id,
+        keyword=rule.keyword,
+        match_type=rule.match_type,
+        response_text=rule.response_text,
+        enabled=rule.enabled,
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
+    )
+
+
 def send_sms_outbound(
     db: Session,
     *,
@@ -189,6 +202,19 @@ def send_sms_outbound(
         db.add(message)
         db.commit()
         db.refresh(message)
+        if marketing_campaign_id and campaign_step_id and customer_id:
+            execution = CampaignStepExecution(
+                campaign_id=marketing_campaign_id,
+                step_id=campaign_step_id,
+                customer_id=customer_id,
+                channel="SMS",
+                status=message.status,
+                message_id=message.id,
+                created_at=now,
+                updated_at=message.updated_at,
+            )
+            db.add(execution)
+            db.commit()
         return SendResult(
             message_id=message.id,
             recipient=recipient,
@@ -239,6 +265,19 @@ def send_sms_outbound(
 
     message.updated_at = datetime.utcnow()
     db.add(message)
+
+    if marketing_campaign_id and campaign_step_id and customer_id:
+        execution = CampaignStepExecution(
+            campaign_id=marketing_campaign_id,
+            step_id=campaign_step_id,
+            customer_id=customer_id,
+            channel="SMS",
+            status=message.status,
+            message_id=message.id,
+            created_at=now,
+            updated_at=message.updated_at,
+        )
+        db.add(execution)
 
     if customer_id:
         customer = db.query(Customer).filter(Customer.id == customer_id).first()
@@ -604,24 +643,84 @@ def start_sms_campaign(
 
 # Keyword rules
 @router.get("/api/sms/keyword-rules", response_model=SmsKeywordRuleListResponse)
+@router.get("/api/sms/keywords", response_model=SmsKeywordRuleListResponse)
 def list_sms_keyword_rules(
     db: Session = Depends(get_db),
     _: ApiKey = Depends(require_api_key("read")),
 ) -> SmsKeywordRuleListResponse:
     rules = db.query(SmsKeywordRule).order_by(SmsKeywordRule.created_at.desc()).all()
-    items = [
-        SmsKeywordRuleItem(
-            id=r.id,
-            keyword=r.keyword,
-            match_type=r.match_type,
-            response_text=r.response_text,
-            enabled=r.enabled,
-            created_at=r.created_at,
-            updated_at=r.updated_at,
-        )
-        for r in rules
-    ]
-    return SmsKeywordRuleListResponse(rules=items)
+    return SmsKeywordRuleListResponse(
+        rules=[_sms_keyword_rule_to_item(rule) for rule in rules]
+    )
+
+
+@router.post("/api/sms/keyword-rules", response_model=SmsKeywordRuleItem)
+@router.post("/api/sms/keywords", response_model=SmsKeywordRuleItem)
+def create_sms_keyword_rule(
+    payload: SmsKeywordRuleCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsKeywordRuleItem:
+    match_type = payload.match_type.lower()
+    if match_type not in {"exact", "contains", "regex"}:
+        raise HTTPException(status_code=400, detail="invalid match_type")
+    rule = SmsKeywordRule(
+        keyword=payload.keyword,
+        match_type=match_type,
+        response_text=payload.response_text,
+        enabled=payload.enabled if payload.enabled is not None else True,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _sms_keyword_rule_to_item(rule)
+
+
+@router.patch("/api/sms/keyword-rules/{rule_id}", response_model=SmsKeywordRuleItem)
+@router.patch("/api/sms/keywords/{rule_id}", response_model=SmsKeywordRuleItem)
+def update_sms_keyword_rule(
+    rule_id: int,
+    payload: SmsKeywordRuleUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsKeywordRuleItem:
+    rule = db.query(SmsKeywordRule).filter(SmsKeywordRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="rule not found")
+    if payload.keyword is not None:
+        rule.keyword = payload.keyword
+    if payload.match_type is not None:
+        match_type = payload.match_type.lower()
+        if match_type not in {"exact", "contains", "regex"}:
+            raise HTTPException(status_code=400, detail="invalid match_type")
+        rule.match_type = match_type
+    if payload.response_text is not None:
+        rule.response_text = payload.response_text
+    if payload.enabled is not None:
+        rule.enabled = payload.enabled
+    rule.updated_at = datetime.utcnow()
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _sms_keyword_rule_to_item(rule)
+
+
+@router.delete("/api/sms/keyword-rules/{rule_id}", response_model=SmsKeywordRuleItem)
+@router.delete("/api/sms/keywords/{rule_id}", response_model=SmsKeywordRuleItem)
+def delete_sms_keyword_rule(
+    rule_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> SmsKeywordRuleItem:
+    rule = db.query(SmsKeywordRule).filter(SmsKeywordRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="rule not found")
+    item = _sms_keyword_rule_to_item(rule)
+    db.delete(rule)
+    db.commit()
+    return item
 
 
 # Opt-out management
