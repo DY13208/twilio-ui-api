@@ -70,6 +70,10 @@ class Settings:
     sms_scheduler_interval_seconds: int
     sms_default_rate_per_minute: int
     sms_default_batch_size: int
+    email_scheduler_enabled: bool
+    email_scheduler_interval_seconds: int
+    marketing_scheduler_enabled: bool
+    marketing_scheduler_interval_seconds: int
 
 
 settings = Settings(
@@ -93,13 +97,17 @@ settings = Settings(
     sendgrid_reply_to_name=os.getenv("SENDGRID_REPLY_TO_NAME"),
     sendgrid_event_webhook_verify=_get_bool("SENDGRID_EVENT_WEBHOOK_VERIFY", False),
     sendgrid_event_webhook_public_key=os.getenv("SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY"),
-    sms_default_country_code=os.getenv("SMS_DEFAULT_COUNTRY_CODE", "86"),
+    sms_default_country_code=os.getenv("SMS_DEFAULT_COUNTRY_CODE", "1"),
     sms_append_opt_out=_get_bool("SMS_APPEND_OPT_OUT", True),
-    sms_opt_out_text=os.getenv("SMS_OPT_OUT_TEXT", "回复T退订"),
-    sms_help_text=os.getenv("SMS_HELP_TEXT", "如需退订请回复 T"),
+    sms_opt_out_text=os.getenv("SMS_OPT_OUT_TEXT", "Reply T to unsubscribe."),
+    sms_help_text=os.getenv("SMS_HELP_TEXT", "To unsubscribe, please reply with T."),
     sms_auto_reply_enabled=_get_bool("SMS_AUTO_REPLY_ENABLED", True),
     sms_scheduler_enabled=_get_bool("SMS_SCHEDULER_ENABLED", True),
     sms_scheduler_interval_seconds=_get_int("SMS_SCHEDULER_INTERVAL_SECONDS", 15),
     sms_default_rate_per_minute=_get_int("SMS_DEFAULT_RATE_PER_MINUTE", 30),
     sms_default_batch_size=_get_int("SMS_DEFAULT_BATCH_SIZE", 100),
+    email_scheduler_enabled=_get_bool("EMAIL_SCHEDULER_ENABLED", True),
+    email_scheduler_interval_seconds=_get_int("EMAIL_SCHEDULER_INTERVAL_SECONDS", 30),
+    marketing_scheduler_enabled=_get_bool("MARKETING_SCHEDULER_ENABLED", True),
+    marketing_scheduler_interval_seconds=_get_int("MARKETING_SCHEDULER_INTERVAL_SECONDS", 30),
 )

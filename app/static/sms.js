@@ -1266,6 +1266,32 @@ function campaignStatusVariant(status) {
   return "muted";
 }
 
+function formatCampaignStatus(status) {
+  const value = String(status || "").toLowerCase();
+  if (value === "draft") {
+    return "草稿";
+  }
+  if (value === "scheduled") {
+    return "已排期";
+  }
+  if (value === "running") {
+    return "发送中";
+  }
+  if (value === "paused") {
+    return "已暂停";
+  }
+  if (value === "completed") {
+    return "已完成";
+  }
+  if (value === "failed") {
+    return "失败";
+  }
+  if (value === "canceled") {
+    return "已取消";
+  }
+  return status || "";
+}
+
 function renderSmsCampaignList(campaigns) {
   smsCampaignListEl.innerHTML = "";
   if (!campaigns.length) {
@@ -1274,7 +1300,10 @@ function renderSmsCampaignList(campaigns) {
   }
   campaigns.forEach((campaign) => {
     const tags = [
-      createTag(campaign.status || "draft", campaignStatusVariant(campaign.status)),
+      createTag(
+        formatCampaignStatus(campaign.status || "draft"),
+        campaignStatusVariant(campaign.status)
+      ),
     ];
     if (campaign.schedule_at) {
       tags.push(createTag("已排期", "muted"));

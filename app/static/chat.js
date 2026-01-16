@@ -136,13 +136,13 @@ function formatDateTime(dateString) {
 function formatChannel(channel) {
   const normalized = (channel || "").toLowerCase();
   if (normalized === "email") {
-    return "Email";
+    return "邮件";
   }
   if (normalized === "whatsapp") {
     return "WhatsApp";
   }
   if (normalized === "sms") {
-    return "SMS";
+    return "短信";
   }
   return channel || "";
 }
@@ -151,7 +151,7 @@ function formatChannels(channels) {
   if (!Array.isArray(channels) || channels.length === 0) {
     return "-";
   }
-  return channels.map(formatChannel).join(", ");
+  return channels.map(formatChannel).join("、");
 }
 
 function formatStatus(status) {
@@ -229,7 +229,7 @@ function showMessageDetail(message) {
   if (message.provider_message_id) {
     sections.push({
       title: "提供商信息",
-      content: [{ label: "Provider Message ID", value: message.provider_message_id }],
+      content: [{ label: "提供商消息ID", value: message.provider_message_id }],
     });
   }
 

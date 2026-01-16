@@ -21,6 +21,12 @@ class Message(Base):
     direction = Column(String(16), index=True, nullable=False, default="outbound")
     provider_message_id = Column(String(128), index=True)
     campaign_id = Column(Integer, index=True)
+    marketing_campaign_id = Column(Integer, index=True)
+    campaign_step_id = Column(Integer, index=True)
+    message_template_id = Column(Integer, index=True)
+    customer_id = Column(Integer, index=True)
+    parent_message_id = Column(Integer, index=True)
+    followup_step = Column(Integer)
     template_id = Column(Integer, index=True)
     variant = Column(String(8))
     price = Column(Numeric(10, 4))
@@ -161,6 +167,104 @@ class SmsCampaign(Base):
     target_groups = Column(Text)
     target_tags = Column(Text)
     target_recipients = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class EmailCampaign(Base):
+    __tablename__ = "email_campaigns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), nullable=False)
+    from_email = Column(String(255))
+    subject = Column(String(255))
+    text = Column(Text)
+    html = Column(Text)
+    recipients = Column(Text)
+    status = Column(String(32), index=True, nullable=False, default="draft")
+    error = Column(Text)
+    schedule_at = Column(DateTime)
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    followup_enabled = Column(Boolean, nullable=False, default=False)
+    followup_delay_minutes = Column(Integer)
+    followup_condition = Column(String(16))
+    followup_subject = Column(String(255))
+    followup_text = Column(Text)
+    followup_html = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255))
+    email = Column(String(255), index=True)
+    whatsapp = Column(String(64), index=True)
+    mobile = Column(String(64), index=True)
+    country = Column(String(64))
+    country_code = Column(String(16))
+    tags = Column(Text)
+    has_marketed = Column(Boolean, nullable=False, default=False)
+    last_campaign_id = Column(Integer, index=True)
+    last_marketed_at = Column(DateTime)
+    email_sent_count = Column(Integer, nullable=False, default=0)
+    whatsapp_sent_count = Column(Integer, nullable=False, default=0)
+    sms_sent_count = Column(Integer, nullable=False, default=0)
+    last_email_status = Column(String(32))
+    last_whatsapp_status = Column(String(32))
+    last_sms_status = Column(String(32))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MessageTemplate(Base):
+    __tablename__ = "message_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    channel = Column(String(16), index=True, nullable=False)
+    name = Column(String(128), nullable=False)
+    language = Column(String(16))
+    subject = Column(String(255))
+    content = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class MarketingCampaign(Base):
+    __tablename__ = "marketing_campaigns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), nullable=False)
+    type = Column(String(16), index=True, nullable=False, default="MIXED")
+    status = Column(String(16), index=True, nullable=False, default="DRAFT")
+    run_immediately = Column(Boolean, nullable=False, default=True)
+    schedule_time = Column(DateTime)
+    target_customer_ids = Column(Text)
+    filter_rules = Column(Text)
+    created_by = Column(String(64))
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CampaignStep(Base):
+    __tablename__ = "campaign_steps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(Integer, index=True, nullable=False)
+    order_no = Column(Integer, nullable=False)
+    channel = Column(String(16), nullable=False)
+    delay_days = Column(Integer, nullable=False, default=0)
+    filter_rules = Column(Text)
+    template_id = Column(Integer, index=True)
+    subject = Column(String(255))
+    content = Column(Text)
+    content_sid = Column(String(64))
+    content_variables = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

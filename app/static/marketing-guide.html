@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>智能营销指南</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">智能营销指南</div>
+        <div class="subtitle">从客户数据到多渠道流程，按步骤调用 API。</div>
+        <div class="header-links">
+          <a href="./" class="link">控制台</a>
+          <a href="api-docs" class="link">API 文档</a>
+          <a href="sms" class="link">短信营销</a>
+          <a href="keys" class="link">Key 管理</a>
+          <a href="users" class="link">用户管理</a>
+          <a href="settings" class="link">设置</a>
+          <a href="logout" class="link">退出</a>
+        </div>
+      </header>
+
+      <section class="card docs">
+        <h2>流程概览</h2>
+        <p>智能营销由「客户」+「消息模板」+「营销计划」+「计划步骤」+「调度器」组成。</p>
+        <ul>
+          <li>营销计划决定客户范围与执行策略（立即或定时）。</li>
+          <li>计划步骤决定每一轮触达的渠道、延迟与筛选条件。</li>
+          <li>调度器自动推进步骤并写入发送/触达统计。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>准备工作</h2>
+        <p>基础地址：<code>http://localhost:8991</code></p>
+        <p>所有营销相关接口需要 API Key（建议在「Key 管理」中创建）。</p>
+        <pre>GET /api/marketing/campaigns
+X-API-Key: YOUR_API_KEY
+Content-Type: application/json</pre>
+        <ul>
+          <li>读操作使用 <code>scope=read</code> 的 Key；创建/更新/启动使用 <code>scope=manage</code>。</li>
+          <li>也可使用 <code>Authorization: Bearer &lt;API_KEY&gt;</code>。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>步骤 1：创建客户</h2>
+        <p><code>POST /api/customers</code> 创建客户。</p>
+        <pre>{
+  "name": "Alice",
+  "email": "alice@example.com",
+  "whatsapp": "whatsapp:+14155550123",
+  "mobile": "+8613712345678",
+  "country": "US",
+  "country_code": "1",
+  "tags": ["OEM", "hospital"]
+}</pre>
+        <ul>
+          <li>email / whatsapp / mobile 至少填写一个。</li>
+          <li>同邮箱去重；无邮箱时以 whatsapp + mobile 去重。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>步骤 2：创建消息模板</h2>
+        <p><code>POST /api/templates</code> 创建模板（示例：Email）。</p>
+        <pre>{
+  "channel": "EMAIL",
+  "name": "首次触达",
+  "language": "zh",
+  "subject": "你好 {{name}}",
+  "content": "欢迎了解我们的产品，期待你的回复。"
+}</pre>
+        <p>WhatsApp 纯文本模板示例：</p>
+        <pre>{
+  "channel": "WHATSAPP",
+  "name": "未回复跟进",
+  "language": "zh",
+  "content": "Hi {{name}}，想确认你是否收到上封邮件。"
+}</pre>
+        <ul>
+          <li>模板支持变量占位：<code>{{name}}</code>、<code>{{country}}</code> 等。</li>
+          <li>模板用于步骤中快速复用，也可在步骤里覆盖 subject/content。</li>
+          <li>此处为本地模板（<code>/api/templates</code>），用于 Email/WhatsApp/SMS 的自由文本内容。</li>
+          <li>WhatsApp 模板消息需先在 Twilio 审核，通过后用 <code>/api/whatsapp/templates</code> 获取 <code>content_sid</code>。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>步骤 3：创建营销计划</h2>
+        <p><code>POST /api/marketing/campaigns</code> 创建计划。</p>
+        <pre>{
+  "name": "全球客户触达",
+  "type": "MIXED",
+  "run_immediately": true,
+  "schedule_time": "2026-01-01T09:00:00Z",
+  "customer_ids": [1, 2, 3],
+  "filter_rules": {"country":"US","tags":["OEM"]},
+  "created_by": "ops"
+}</pre>
+        <ul>
+          <li><code>customer_ids</code> 与 <code>filter_rules</code> 二选一或组合使用。</li>
+          <li>filter_rules 支持 country / country_code / tags / has_marketed / last_email_status 等。</li>
+          <li>schedule_time 使用 UTC ISO8601，run_immediately 为 true 时会自动进入执行。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>步骤 4：创建计划步骤</h2>
+        <p><code>POST /api/marketing/campaigns/{campaign_id}/steps</code> 创建步骤。</p>
+        <pre>{
+  "order_no": 1,
+  "channel": "EMAIL",
+  "delay_days": 0,
+  "template_id": 12,
+  "subject": "Checking in",
+  "content": "Hi {{name}}，这是我们的产品介绍。"
+}</pre>
+        <p>示例：邮件 7 天未回复后转 WhatsApp：</p>
+        <pre>{
+  "order_no": 2,
+  "channel": "WHATSAPP",
+  "delay_days": 7,
+  "filter_rules": {
+    "prev_channel": "EMAIL",
+    "reply_status": "not_replied",
+    "within_days": 7
+  },
+  "content_sid": "HXxxxxxxxxxxxx",
+  "content_variables": {"1": "{{name}}"}
+}</pre>
+        <ul>
+          <li>order_no 为执行顺序；delay_days 为相对上一步的延迟天数。</li>
+          <li>筛选规则常用字段：prev_channel / reply_status / within_days / opened_status。</li>
+          <li>扩展字段：email_opened_within_days / email_replied_within_days / email_not_replied_within_days / email_not_opened_within_days。</li>
+          <li>WhatsApp 支持 content_sid + content_variables（content_sid 来自 <code>/api/whatsapp/templates</code>）。</li>
+          <li>template_id 来自本地模板接口 <code>/api/templates</code>；SMS 步骤当前仅记录，不发送。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>步骤 5：启动 / 停止计划</h2>
+        <p><code>POST /api/marketing/campaigns/{campaign_id}/start</code> 强制进入执行。</p>
+        <p><code>POST /api/marketing/campaigns/{campaign_id}/stop</code> 停止计划。</p>
+        <ul>
+          <li>调度器会自动把 DRAFT 且满足条件的计划转为 RUNNING。</li>
+          <li>如果需要立即触发，可直接调用 start 接口。</li>
+        </ul>
+      </section>
+
+      <section class="card docs">
+        <h2>步骤 6：查看执行进度</h2>
+        <p><code>GET /api/marketing/campaigns</code> 查看统计数据。</p>
+        <pre>{
+  "campaigns": [
+    {
+      "id": 3,
+      "status": "RUNNING",
+      "total_customers": 120,
+      "delivered_count": 98,
+      "email_opened_count": 42,
+      "email_replied_count": 8
+    }
+  ]
+}</pre>
+        <p><code>GET /api/marketing/campaigns/{campaign_id}/steps</code> 查看步骤配置。</p>
+        <p><code>GET /api/customers?search=alice</code> 可按名称/邮箱/WhatsApp/手机模糊查询客户。</p>
+      </section>
+
+      <section class="card docs">
+        <h2>常见注意事项</h2>
+        <ul>
+          <li>确保已配置邮件/WhatsApp 发件人白名单，否则计划会被停止。</li>
+          <li>环境变量：<code>MARKETING_SCHEDULER_ENABLED</code> 与 <code>MARKETING_SCHEDULER_INTERVAL_SECONDS</code>。</li>
+          <li>schedule_time 使用 UTC 时间；需要转换本地时区。</li>
+          <li>SMS 步骤当前仅写入记录（status=skipped）。</li>
+        </ul>
+      </section>
+    </div>
+  </body>
+</html>

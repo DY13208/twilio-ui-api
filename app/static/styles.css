@@ -94,6 +94,13 @@ body {
   grid-column: 1 / -1;
 }
 
+.divider {
+  height: 1px;
+  width: 100%;
+  background: var(--border);
+  margin: 24px 0;
+}
+
 h2 {
   margin: 0 0 18px;
   font-size: 22px;

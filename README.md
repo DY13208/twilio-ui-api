@@ -111,10 +111,19 @@ API Key 权限（scope）：
 ```
 POST /api/send/email
 POST /api/send/whatsapp
-GET /api/email/senders
-POST /api/email/senders
-DELETE /api/email/senders
-GET /api/whatsapp/senders
+  GET /api/email/senders
+  POST /api/email/senders
+  DELETE /api/email/senders
+  GET /api/email/campaigns
+  POST /api/email/campaigns
+  PATCH /api/email/campaigns/{campaign_id}
+  POST /api/email/campaigns/{campaign_id}/schedule
+  POST /api/email/campaigns/{campaign_id}/start
+  POST /api/email/campaigns/{campaign_id}/pause
+  POST /api/email/campaigns/{campaign_id}/resume
+  POST /api/email/campaigns/{campaign_id}/cancel
+  GET /api/email/campaigns/{campaign_id}/flow
+  GET /api/whatsapp/senders
 POST /api/whatsapp/senders
 DELETE /api/whatsapp/senders
 GET /api/whatsapp/templates

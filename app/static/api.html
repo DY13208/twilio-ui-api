@@ -13,6 +13,7 @@
         <div class="subtitle">接口说明、参数与注意事项。</div>
         <div class="header-links">
           <a href="./" class="link">返回控制台</a>
+          <a href="marketing-guide" class="link">智能营销指南</a>
           <a href="sms" class="link">短信营销</a>
           <a href="keys" class="link">Key 管理</a>
           <a href="users" class="link">用户管理</a>
@@ -96,11 +97,132 @@
           <li><code>text</code> 或 <code>html</code> 至少提供一个。</li>
           <li><code>from_email</code> 必须在白名单内。</li>
         </ul>
-      </section>
+        </section>
 
-      <section class="card docs">
-        <h2>WhatsApp 发送人白名单</h2>
-        <p><code>GET /api/whatsapp/senders</code> 获取白名单列表。</p>
+        <section class="card docs">
+          <h2>Email 跟进流程</h2>
+          <p><code>GET /api/email/campaigns</code> 获取邮件跟进流程列表。</p>
+          <p><code>POST /api/email/campaigns</code> 创建邮件跟进流程。</p>
+          <pre>{
+    "name": "Follow-up Demo",
+    "recipients": ["a@example.com"],
+    "subject": "Hello",
+    "text": "Hi",
+    "from_email": "sender@example.com",
+    "schedule_at": "2026-01-01T09:00:00Z",
+    "followup_enabled": true,
+    "followup_delay_minutes": 1440,
+    "followup_condition": "unopened",
+    "followup_subject": "Checking in",
+    "followup_text": "Just following up"
+  }</pre>
+          <p><code>PATCH /api/email/campaigns/{campaign_id}</code> 更新流程。</p>
+          <p><code>POST /api/email/campaigns/{campaign_id}/schedule</code> 设置排期。</p>
+          <p><code>POST /api/email/campaigns/{campaign_id}/start</code> 立即启动。</p>
+          <p><code>POST /api/email/campaigns/{campaign_id}/pause</code> 暂停。</p>
+          <p><code>POST /api/email/campaigns/{campaign_id}/resume</code> 恢复。</p>
+          <p><code>POST /api/email/campaigns/{campaign_id}/cancel</code> 取消。</p>
+          <p><code>GET /api/email/campaigns/{campaign_id}/flow</code> 查看跟进流程。</p>
+        </section>
+
+        <section class="card docs">
+          <h2>客户（Customer）</h2>
+          <p><code>GET /api/customers</code> 获取客户列表。</p>
+          <ul>
+            <li>查询参数：<code>id</code> / <code>search</code> / <code>tag</code> / <code>has_marketed</code> / <code>country</code> / <code>country_code</code> / <code>limit</code> / <code>offset</code>。</li>
+            <li><code>search</code> 模糊匹配 name / email / whatsapp / mobile。</li>
+          </ul>
+          <pre>GET /api/customers?search=alice&amp;tag=OEM&amp;has_marketed=true&amp;country=US&amp;country_code=1&amp;limit=100&amp;offset=0</pre>
+          <p><code>GET /api/customers/{customer_id}</code> 获取单个客户。</p>
+          <p><code>POST /api/customers</code> 创建客户。</p>
+          <pre>{
+  "name": "Alice",
+  "email": "alice@example.com",
+  "whatsapp": "whatsapp:+14155550123",
+  "mobile": "+8613712345678",
+  "country": "US",
+  "country_code": "1",
+  "tags": ["OEM", "hospital"]
+}</pre>
+          <p><code>PATCH /api/customers/{customer_id}</code> 更新客户。</p>
+          <p><code>DELETE /api/customers/{customer_id}</code> 删除客户。</p>
+          <ul>
+            <li>email / whatsapp / mobile 至少提供一个。</li>
+            <li>同邮箱去重；无邮箱时以 whatsapp + mobile 去重。</li>
+          </ul>
+        </section>
+
+        <section class="card docs">
+          <h2>消息模板（Message Templates）</h2>
+          <p><code>GET /api/templates</code> 获取模板列表。</p>
+          <p><code>GET /api/templates?channel=EMAIL</code> 按渠道筛选。</p>
+          <p><code>POST /api/templates</code> 创建模板。</p>
+          <pre>{
+  "channel": "EMAIL",
+  "name": "Intro",
+  "language": "en",
+  "subject": "Hello",
+  "content": "Hi {{name}}"
+}</pre>
+          <p><code>PATCH /api/templates/{template_id}</code> 更新模板。</p>
+          <p><code>DELETE /api/templates/{template_id}</code> 删除模板。</p>
+          <ul>
+            <li>channel 可选：EMAIL / WHATSAPP / SMS。</li>
+            <li>支持变量占位：<code>{{name}}</code>。</li>
+            <li>此处为本地消息模板，用于 Email/WhatsApp/SMS 的自由文本内容复用。</li>
+            <li>WhatsApp 模板消息请使用 <code>GET /api/whatsapp/templates</code> 获取 <code>content_sid</code>。</li>
+          </ul>
+        </section>
+
+        <section class="card docs">
+          <h2>营销计划（Marketing Campaigns）</h2>
+          <p><code>GET /api/marketing/campaigns</code> 获取计划列表。</p>
+          <p><code>GET /api/marketing/campaigns?status=RUNNING</code> 按状态筛选。</p>
+          <p><code>POST /api/marketing/campaigns</code> 创建计划。</p>
+          <pre>{
+  "name": "Global Outreach",
+  "type": "MIXED",
+  "run_immediately": true,
+  "schedule_time": "2026-01-01T09:00:00Z",
+  "customer_ids": [1, 2, 3],
+  "filter_rules": {"country":"US","tags":["OEM"]},
+  "created_by": "ops"
+}</pre>
+          <p><code>PATCH /api/marketing/campaigns/{campaign_id}</code> 更新计划。</p>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/start</code> 启动计划。</p>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/stop</code> 停止计划。</p>
+          <ul>
+            <li>状态：DRAFT / RUNNING / FINISHED / STOPPED。</li>
+            <li>filter_rules 支持 country / country_code / tags / has_marketed / last_email_status 等。</li>
+          </ul>
+        </section>
+
+        <section class="card docs">
+          <h2>计划步骤（Campaign Steps）</h2>
+          <p><code>GET /api/marketing/campaigns/{campaign_id}/steps</code> 获取步骤列表。</p>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/steps</code> 创建步骤。</p>
+          <pre>{
+  "order_no": 1,
+  "channel": "EMAIL",
+  "delay_days": 0,
+  "filter_rules": {"prev_channel":"EMAIL","reply_status":"not_replied","within_days":7},
+  "template_id": 12,
+  "subject": "Checking in",
+  "content": "Hi {{name}}"
+}</pre>
+          <p><code>PATCH /api/marketing/campaigns/{campaign_id}/steps/{step_id}</code> 更新步骤。</p>
+          <p><code>DELETE /api/marketing/campaigns/{campaign_id}/steps/{step_id}</code> 删除步骤。</p>
+          <ul>
+            <li>过滤条件示例：prev_channel / reply_status / within_days / opened_status。</li>
+            <li>支持：email_opened_within_days / email_replied_within_days / email_not_replied_within_days。</li>
+            <li>WhatsApp 可用 content_sid + content_variables（content_sid 来自 <code>/api/whatsapp/templates</code>）。</li>
+            <li>template_id 来自本地模板接口 <code>/api/templates</code>；SMS 步骤暂仅记录。</li>
+          </ul>
+        </section>
+
+        <section class="card docs">
+          <h2>WhatsApp 发送人白名单</h2>
+          <p><code>GET /api/whatsapp/senders</code> 获取白名单列表。</p>
         <p><code>POST /api/whatsapp/senders</code> 添加白名单。</p>
         <pre>{
   "from_address": "whatsapp:+14155238886"
@@ -134,6 +256,7 @@
         <p><code>GET /api/whatsapp/templates</code> 获取模板列表（来自 Twilio Content API）。</p>
         <ul>
           <li>需要正确配置 Twilio 账号与 Token。</li>
+          <li>这是 Twilio 模板列表，与本地模板接口 <code>/api/templates</code> 不同。</li>
           <li>默认返回最多 50 条，可通过 <code>limit</code> 参数调整。</li>
           <li>支持 <code>search</code> 过滤模板名称或 SID。</li>
           <li><code>use_proxy</code> 设为 <code>false</code> 可禁用本地代理。</li>

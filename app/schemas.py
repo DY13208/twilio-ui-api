@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -34,6 +34,262 @@ class EmailSenderUpsertResponse(BaseModel):
     from_email: EmailStr
     status: str
     senders: List[EmailSenderItem]
+
+
+class EmailCampaignCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    recipients: List[EmailStr] = Field(..., min_length=1)
+    subject: str = Field(..., min_length=1)
+    text: Optional[str] = None
+    html: Optional[str] = None
+    from_email: Optional[EmailStr] = None
+    schedule_at: Optional[datetime] = None
+    followup_enabled: Optional[bool] = None
+    followup_delay_minutes: Optional[int] = None
+    followup_condition: Optional[str] = None
+    followup_subject: Optional[str] = None
+    followup_text: Optional[str] = None
+    followup_html: Optional[str] = None
+
+
+class EmailCampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    recipients: Optional[List[EmailStr]] = None
+    subject: Optional[str] = None
+    text: Optional[str] = None
+    html: Optional[str] = None
+    from_email: Optional[EmailStr] = None
+    schedule_at: Optional[datetime] = None
+    status: Optional[str] = None
+    followup_enabled: Optional[bool] = None
+    followup_delay_minutes: Optional[int] = None
+    followup_condition: Optional[str] = None
+    followup_subject: Optional[str] = None
+    followup_text: Optional[str] = None
+    followup_html: Optional[str] = None
+
+
+class EmailCampaignItem(BaseModel):
+    id: int
+    name: str
+    recipients: List[EmailStr] = []
+    subject: Optional[str] = None
+    text: Optional[str] = None
+    html: Optional[str] = None
+    from_email: Optional[EmailStr] = None
+    status: str
+    error: Optional[str] = None
+    schedule_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    followup_enabled: bool
+    followup_delay_minutes: Optional[int] = None
+    followup_condition: Optional[str] = None
+    followup_subject: Optional[str] = None
+    followup_text: Optional[str] = None
+    followup_html: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EmailCampaignListResponse(BaseModel):
+    campaigns: List[EmailCampaignItem]
+
+
+class EmailFollowupFlowItem(BaseModel):
+    recipient: EmailStr
+    initial_message_id: int
+    initial_status: str
+    initial_created_at: datetime
+    initial_read_at: Optional[datetime] = None
+    followup_message_id: Optional[int] = None
+    followup_status: Optional[str] = None
+    followup_created_at: Optional[datetime] = None
+    followup_read_at: Optional[datetime] = None
+    followup_due_at: Optional[datetime] = None
+    followup_state: str
+
+
+class EmailFollowupFlowResponse(BaseModel):
+    campaign_id: int
+    total: int
+    items: List[EmailFollowupFlowItem]
+
+
+class CustomerCreate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    whatsapp: Optional[str] = None
+    mobile: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class CustomerUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    whatsapp: Optional[str] = None
+    mobile: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class CustomerItem(BaseModel):
+    id: int
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    whatsapp: Optional[str] = None
+    mobile: Optional[str] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    tags: List[str] = []
+    has_marketed: bool
+    last_campaign_id: Optional[int] = None
+    last_marketed_at: Optional[datetime] = None
+    email_sent_count: int
+    whatsapp_sent_count: int
+    sms_sent_count: int
+    last_email_status: Optional[str] = None
+    last_whatsapp_status: Optional[str] = None
+    last_sms_status: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerListResponse(BaseModel):
+    customers: List[CustomerItem]
+    total: int
+
+
+class MarketingCampaignCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    type: Optional[str] = None
+    run_immediately: Optional[bool] = None
+    schedule_time: Optional[datetime] = None
+    customer_ids: Optional[List[int]] = None
+    filter_rules: Optional[Dict[str, Any]] = None
+    created_by: Optional[str] = None
+
+
+class MarketingCampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    status: Optional[str] = None
+    run_immediately: Optional[bool] = None
+    schedule_time: Optional[datetime] = None
+    customer_ids: Optional[List[int]] = None
+    filter_rules: Optional[Dict[str, Any]] = None
+    created_by: Optional[str] = None
+
+
+class MarketingCampaignItem(BaseModel):
+    id: int
+    name: str
+    type: str
+    status: str
+    run_immediately: bool
+    schedule_time: Optional[datetime] = None
+    customer_ids: List[int] = []
+    filter_rules: Optional[Dict[str, Any]] = None
+    created_by: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    total_customers: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    delivered_count: int = 0
+    email_sent_count: int = 0
+    email_opened_count: int = 0
+    email_replied_count: int = 0
+    whatsapp_replied_count: int = 0
+    sms_replied_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class MarketingCampaignListResponse(BaseModel):
+    campaigns: List[MarketingCampaignItem]
+
+
+class CampaignStepCreate(BaseModel):
+    order_no: int = Field(..., ge=1)
+    channel: str = Field(..., min_length=1)
+    delay_days: Optional[int] = None
+    filter_rules: Optional[Dict[str, Any]] = None
+    template_id: Optional[int] = None
+    subject: Optional[str] = None
+    content: Optional[str] = None
+    content_sid: Optional[str] = None
+    content_variables: Optional[Dict[str, Any]] = None
+
+
+class CampaignStepBatchCreate(BaseModel):
+    steps: List[CampaignStepCreate] = Field(..., min_length=1)
+
+
+class CampaignStepUpdate(BaseModel):
+    order_no: Optional[int] = None
+    channel: Optional[str] = None
+    delay_days: Optional[int] = None
+    filter_rules: Optional[Dict[str, Any]] = None
+    template_id: Optional[int] = None
+    subject: Optional[str] = None
+    content: Optional[str] = None
+    content_sid: Optional[str] = None
+    content_variables: Optional[Dict[str, Any]] = None
+
+
+class CampaignStepItem(BaseModel):
+    id: int
+    campaign_id: int
+    order_no: int
+    channel: str
+    delay_days: int
+    filter_rules: Optional[Dict[str, Any]] = None
+    template_id: Optional[int] = None
+    subject: Optional[str] = None
+    content: Optional[str] = None
+    content_sid: Optional[str] = None
+    content_variables: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CampaignStepListResponse(BaseModel):
+    steps: List[CampaignStepItem]
+
+
+class MessageTemplateCreate(BaseModel):
+    channel: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    language: Optional[str] = None
+    subject: Optional[str] = None
+    content: Optional[str] = None
+
+
+class MessageTemplateUpdate(BaseModel):
+    channel: Optional[str] = None
+    name: Optional[str] = None
+    language: Optional[str] = None
+    subject: Optional[str] = None
+    content: Optional[str] = None
+
+
+class MessageTemplateItem(BaseModel):
+    id: int
+    channel: str
+    name: str
+    language: Optional[str] = None
+    subject: Optional[str] = None
+    content: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MessageTemplateListResponse(BaseModel):
+    templates: List[MessageTemplateItem]
 
 
 class WhatsAppSendRequest(BaseModel):
@@ -205,6 +461,8 @@ class MessageStatus(BaseModel):
     status: str
     provider_message_id: Optional[str]
     error: Optional[str]
+    parent_message_id: Optional[int] = None
+    followup_step: Optional[int] = None
     read_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -227,6 +485,8 @@ class ChatMessage(BaseModel):
     status: str
     provider_message_id: Optional[str]
     error: Optional[str]
+    parent_message_id: Optional[int] = None
+    followup_step: Optional[int] = None
     read_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
