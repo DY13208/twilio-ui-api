@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import os
-from typing import Optional
+from typing import List, Optional
 
 from dotenv import load_dotenv
 
@@ -39,9 +39,17 @@ def _get_optional_bool(name: str) -> Optional[bool]:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_csv_list(name: str) -> List[str]:
+    value = os.getenv(name, "")
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
+    db_connect_timeout_seconds: int
     public_base_url: Optional[str]
     twilio_account_sid: Optional[str]
     twilio_auth_token: Optional[str]
@@ -75,10 +83,12 @@ class Settings:
     email_scheduler_interval_seconds: int
     marketing_scheduler_enabled: bool
     marketing_scheduler_interval_seconds: int
+    cors_allow_origins: List[str]
 
 
 settings = Settings(
     database_url=_require("DATABASE_URL"),
+    db_connect_timeout_seconds=_get_int("DB_CONNECT_TIMEOUT_SECONDS", 5),
     public_base_url=os.getenv("PUBLIC_BASE_URL"),
     twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
     twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
@@ -112,4 +122,5 @@ settings = Settings(
     email_scheduler_interval_seconds=_get_int("EMAIL_SCHEDULER_INTERVAL_SECONDS", 30),
     marketing_scheduler_enabled=_get_bool("MARKETING_SCHEDULER_ENABLED", True),
     marketing_scheduler_interval_seconds=_get_int("MARKETING_SCHEDULER_INTERVAL_SECONDS", 30),
+    cors_allow_origins=_get_csv_list("CORS_ALLOW_ORIGINS"),
 )

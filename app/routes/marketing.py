@@ -13,6 +13,7 @@ from app.models import (
     CampaignStep,
     CampaignStepExecution,
     Customer,
+    CustomerGroupMember,
     MarketingCustomerState,
     MarketingCampaign,
     Message,
@@ -187,6 +188,25 @@ def dispatch_marketing_campaign(db: Session, campaign: MarketingCampaign, now: d
         customers = db.query(Customer).all()
     
     filter_rules = deserialize_json_dict(campaign.filter_rules)
+    raw_group_ids = filter_rules.pop("group_ids", None)
+    if raw_group_ids is None:
+        raw_group_ids = filter_rules.pop("group_id", None)
+    group_ids: List[int] = []
+    if isinstance(raw_group_ids, list):
+        group_ids = [int(v) for v in raw_group_ids if str(v).isdigit()]
+    elif raw_group_ids is not None and str(raw_group_ids).isdigit():
+        group_ids = [int(raw_group_ids)]
+    if group_ids:
+        member_ids = {
+            row[0]
+            for row in db.query(CustomerGroupMember.customer_id)
+            .filter(CustomerGroupMember.group_id.in_(group_ids))
+            .all()
+        }
+        if member_ids:
+            customers = [customer for customer in customers if customer.id in member_ids]
+        else:
+            customers = []
     eligible_customers = filter_customers_by_rules(customers, filter_rules)
 
     if not eligible_customers:

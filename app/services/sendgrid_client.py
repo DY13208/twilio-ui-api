@@ -2,7 +2,16 @@ from typing import Dict, Optional, Tuple
 
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.eventwebhook import EventWebhook
-from sendgrid.helpers.mail import Content, CustomArg, Email, Mail, Personalization, To
+from sendgrid.helpers.mail import (
+    Content,
+    CustomArg,
+    Email,
+    Mail,
+    OpenTracking,
+    Personalization,
+    To,
+    TrackingSettings,
+)
 
 from app.config import settings
 
@@ -61,6 +70,9 @@ class SendGridService:
             for key, value in custom_args.items():
                 personalization.add_custom_arg(CustomArg(key, value))
         mail.add_personalization(personalization)
+        tracking_settings = TrackingSettings()
+        tracking_settings.open_tracking = OpenTracking(enable=True)
+        mail.tracking_settings = tracking_settings
 
         response = self._client.send(mail)
         message_id = response.headers.get("X-Message-Id") or response.headers.get("X-Message-ID")

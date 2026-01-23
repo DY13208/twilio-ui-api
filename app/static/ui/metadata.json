@@ -1,0 +1,8 @@
+{
+  "name": "AI智能营销中心",
+  "description": "一个全方位的AI驱动营销管理系统，支持多渠道触达、自动化营销流程设计及详细的API集成文档。",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
@@ -24,6 +25,20 @@ from app.utils import login_redirect_path
 app = FastAPI(title="Twilio Broadcast Console")
 
 static_dir = Path(__file__).resolve().parent / "static"
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "time": f"{datetime.utcnow().isoformat()}Z"}
+
+if settings.cors_allow_origins:
+    allow_credentials = "*" not in settings.cors_allow_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allow_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 class AuthStaticFiles(StaticFiles):

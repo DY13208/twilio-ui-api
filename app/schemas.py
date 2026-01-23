@@ -163,6 +163,57 @@ class CustomerListResponse(BaseModel):
     total: int
 
 
+class CustomerTagItem(BaseModel):
+    tag: str
+    count: int
+
+
+class CustomerTagListResponse(BaseModel):
+    tags: List[CustomerTagItem]
+
+
+class CustomerTagRenameRequest(BaseModel):
+    from_tag: str = Field(..., min_length=1)
+    to_tag: str = Field(..., min_length=1)
+
+
+class CustomerTagMutationResponse(BaseModel):
+    status: str
+    updated: int = 0
+
+
+class CustomerGroupCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: Optional[str] = None
+
+
+class CustomerGroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class CustomerGroupItem(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    member_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerGroupListResponse(BaseModel):
+    groups: List[CustomerGroupItem]
+
+
+class CustomerGroupMembersRequest(BaseModel):
+    customer_ids: Optional[List[int]] = None
+
+
+class CustomerGroupMembersResponse(BaseModel):
+    group_id: int
+    members: List[CustomerItem]
+
+
 class MarketingCampaignCreate(BaseModel):
     name: str = Field(..., min_length=1)
     type: Optional[str] = None

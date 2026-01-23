@@ -220,6 +220,25 @@ class Customer(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class CustomerGroup(Base):
+    __tablename__ = "customer_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(128), unique=True, nullable=False)
+    description = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class CustomerGroupMember(Base):
+    __tablename__ = "customer_group_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, index=True, nullable=False)
+    customer_id = Column(Integer, index=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class MessageTemplate(Base):
     __tablename__ = "message_templates"
 

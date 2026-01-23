@@ -3,15 +3,26 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import ApiKey, Customer
+from app.models import ApiKey, Customer, CustomerGroup, CustomerGroupMember
 from app.schemas import (
     CustomerCreate,
     CustomerItem,
     CustomerListResponse,
+    CustomerTagItem,
+    CustomerTagListResponse,
+    CustomerTagRenameRequest,
+    CustomerTagMutationResponse,
     CustomerUpdate,
+    CustomerGroupCreate,
+    CustomerGroupItem,
+    CustomerGroupListResponse,
+    CustomerGroupMembersRequest,
+    CustomerGroupMembersResponse,
+    CustomerGroupUpdate,
 )
 from app.dependencies import require_api_key
 from app.utils import (
@@ -51,6 +62,17 @@ def _customer_to_item(customer: Customer) -> CustomerItem:
     )
 
 
+def _customer_group_to_item(group: CustomerGroup, member_count: int = 0) -> CustomerGroupItem:
+    return CustomerGroupItem(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        member_count=member_count,
+        created_at=group.created_at,
+        updated_at=group.updated_at,
+    )
+
+
 @router.get("/api/customers", response_model=CustomerListResponse)
 def list_customers(
     customer_id: Optional[int] = Query(None, alias="id"),
@@ -59,6 +81,7 @@ def list_customers(
     has_marketed: Optional[bool] = None,
     country: Optional[str] = None,
     country_code: Optional[str] = None,
+    group_id: Optional[int] = None,
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -81,6 +104,10 @@ def list_customers(
         query = query.filter(Customer.country == country.strip())
     if country_code:
         query = query.filter(Customer.country_code == country_code.strip())
+    if group_id is not None:
+        query = query.join(
+            CustomerGroupMember, CustomerGroupMember.customer_id == Customer.id
+        ).filter(CustomerGroupMember.group_id == group_id)
 
     customers = query.order_by(Customer.created_at.desc()).all()
 
@@ -98,6 +125,257 @@ def list_customers(
         customers=[_customer_to_item(c) for c in paginated],
         total=total,
     )
+
+
+@router.get("/api/customers/tags", response_model=CustomerTagListResponse)
+def list_customer_tags(
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> CustomerTagListResponse:
+    counts = {}
+    for customer in db.query(Customer).all():
+        for tag in deserialize_tags(customer.tags):
+            cleaned = tag.strip()
+            if not cleaned:
+                continue
+            counts[cleaned] = counts.get(cleaned, 0) + 1
+    items = [CustomerTagItem(tag=tag, count=count) for tag, count in counts.items()]
+    items.sort(key=lambda item: (-item.count, item.tag.lower()))
+    return CustomerTagListResponse(tags=items)
+
+
+@router.post("/api/customers/tags/rename", response_model=CustomerTagMutationResponse)
+def rename_customer_tag(
+    payload: CustomerTagRenameRequest,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CustomerTagMutationResponse:
+    from_tag = payload.from_tag.strip()
+    to_tag = payload.to_tag.strip()
+    if not from_tag or not to_tag:
+        raise HTTPException(status_code=400, detail="from_tag and to_tag are required")
+    if from_tag.lower() == to_tag.lower():
+        return CustomerTagMutationResponse(status="ok", updated=0)
+    now = datetime.utcnow()
+    updated = 0
+    for customer in db.query(Customer).all():
+        tags = deserialize_tags(customer.tags)
+        if not tags:
+            continue
+        new_tags = [to_tag if t.lower() == from_tag.lower() else t for t in tags]
+        if new_tags == tags:
+            continue
+        customer.tags = serialize_tags(new_tags)
+        customer.updated_at = now
+        db.add(customer)
+        updated += 1
+    db.commit()
+    return CustomerTagMutationResponse(status="ok", updated=updated)
+
+
+@router.delete("/api/customers/tags/{tag}", response_model=CustomerTagMutationResponse)
+def delete_customer_tag(
+    tag: str,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CustomerTagMutationResponse:
+    tag_value = tag.strip()
+    if not tag_value:
+        raise HTTPException(status_code=400, detail="tag is required")
+    now = datetime.utcnow()
+    updated = 0
+    for customer in db.query(Customer).all():
+        tags = deserialize_tags(customer.tags)
+        if not tags:
+            continue
+        new_tags = [t for t in tags if t.lower() != tag_value.lower()]
+        if new_tags == tags:
+            continue
+        customer.tags = serialize_tags(new_tags)
+        customer.updated_at = now
+        db.add(customer)
+        updated += 1
+    db.commit()
+    return CustomerTagMutationResponse(status="ok", updated=updated)
+
+
+@router.get("/api/customers/groups", response_model=CustomerGroupListResponse)
+def list_customer_groups(
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> CustomerGroupListResponse:
+    groups = db.query(CustomerGroup).order_by(CustomerGroup.created_at.desc()).all()
+    counts = dict(
+        db.query(CustomerGroupMember.group_id, func.count(CustomerGroupMember.id))
+        .group_by(CustomerGroupMember.group_id)
+        .all()
+    )
+    return CustomerGroupListResponse(
+        groups=[_customer_group_to_item(group, counts.get(group.id, 0)) for group in groups]
+    )
+
+
+@router.post("/api/customers/groups", response_model=CustomerGroupItem)
+def create_customer_group(
+    payload: CustomerGroupCreate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CustomerGroupItem:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    existing = db.query(CustomerGroup).filter(CustomerGroup.name == name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="group name already exists")
+    now = datetime.utcnow()
+    group = CustomerGroup(
+        name=name,
+        description=payload.description,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return _customer_group_to_item(group, 0)
+
+
+@router.patch("/api/customers/groups/{group_id}", response_model=CustomerGroupItem)
+def update_customer_group(
+    group_id: int,
+    payload: CustomerGroupUpdate,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CustomerGroupItem:
+    group = db.query(CustomerGroup).filter(CustomerGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        existing = db.query(CustomerGroup).filter(CustomerGroup.name == name).first()
+        if existing and existing.id != group.id:
+            raise HTTPException(status_code=400, detail="group name already exists")
+        group.name = name
+    if payload.description is not None:
+        group.description = payload.description
+    group.updated_at = datetime.utcnow()
+    db.add(group)
+    db.commit()
+    count = (
+        db.query(func.count(CustomerGroupMember.id))
+        .filter(CustomerGroupMember.group_id == group.id)
+        .scalar()
+        or 0
+    )
+    return _customer_group_to_item(group, count)
+
+
+@router.delete("/api/customers/groups/{group_id}", response_model=CustomerGroupItem)
+def delete_customer_group(
+    group_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CustomerGroupItem:
+    group = db.query(CustomerGroup).filter(CustomerGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    count = (
+        db.query(func.count(CustomerGroupMember.id))
+        .filter(CustomerGroupMember.group_id == group.id)
+        .scalar()
+        or 0
+    )
+    item = _customer_group_to_item(group, count)
+    db.query(CustomerGroupMember).filter(
+        CustomerGroupMember.group_id == group.id
+    ).delete(synchronize_session=False)
+    db.delete(group)
+    db.commit()
+    return item
+
+
+@router.get("/api/customers/groups/{group_id}/members", response_model=CustomerGroupMembersResponse)
+def list_customer_group_members(
+    group_id: int,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("read")),
+) -> CustomerGroupMembersResponse:
+    group = db.query(CustomerGroup).filter(CustomerGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    members = (
+        db.query(Customer)
+        .join(CustomerGroupMember, CustomerGroupMember.customer_id == Customer.id)
+        .filter(CustomerGroupMember.group_id == group_id)
+        .order_by(Customer.created_at.desc())
+        .all()
+    )
+    return CustomerGroupMembersResponse(
+        group_id=group_id,
+        members=[_customer_to_item(member) for member in members],
+    )
+
+
+@router.post("/api/customers/groups/{group_id}/members", response_model=CustomerGroupMembersResponse)
+def add_customer_group_members(
+    group_id: int,
+    payload: CustomerGroupMembersRequest,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CustomerGroupMembersResponse:
+    group = db.query(CustomerGroup).filter(CustomerGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    customer_ids = [int(v) for v in (payload.customer_ids or []) if isinstance(v, int) or str(v).isdigit()]
+    if customer_ids:
+        existing_ids = {
+            row[0]
+            for row in db.query(CustomerGroupMember.customer_id)
+            .filter(
+                CustomerGroupMember.group_id == group_id,
+                CustomerGroupMember.customer_id.in_(customer_ids),
+            )
+            .all()
+        }
+        valid_ids = {
+            customer.id
+            for customer in db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
+        }
+        now = datetime.utcnow()
+        for customer_id in valid_ids:
+            if customer_id in existing_ids:
+                continue
+            db.add(
+                CustomerGroupMember(
+                    group_id=group_id,
+                    customer_id=customer_id,
+                    created_at=now,
+                )
+            )
+        db.commit()
+    return list_customer_group_members(group_id, db, _)
+
+
+@router.delete("/api/customers/groups/{group_id}/members", response_model=CustomerGroupMembersResponse)
+def remove_customer_group_members(
+    group_id: int,
+    payload: CustomerGroupMembersRequest,
+    db: Session = Depends(get_db),
+    _: ApiKey = Depends(require_api_key("manage")),
+) -> CustomerGroupMembersResponse:
+    group = db.query(CustomerGroup).filter(CustomerGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    customer_ids = [int(v) for v in (payload.customer_ids or []) if isinstance(v, int) or str(v).isdigit()]
+    if customer_ids:
+        db.query(CustomerGroupMember).filter(
+            CustomerGroupMember.group_id == group_id,
+            CustomerGroupMember.customer_id.in_(customer_ids),
+        ).delete(synchronize_session=False)
+        db.commit()
+    return list_customer_group_members(group_id, db, _)
 
 
 @router.get("/api/customers/{customer_id}", response_model=CustomerItem)
@@ -182,6 +460,9 @@ def delete_customer(
     if not customer:
         raise HTTPException(status_code=404, detail="customer not found")
     item = _customer_to_item(customer)
+    db.query(CustomerGroupMember).filter(
+        CustomerGroupMember.customer_id == customer_id
+    ).delete(synchronize_session=False)
     db.delete(customer)
     db.commit()
     return item

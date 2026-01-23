@@ -251,7 +251,7 @@ async def twilio_sms_inbound_webhook(request: Request, db: Session = Depends(get
     return PlainTextResponse("OK")
 
 
-@router.post("/sendgrid/event")
+@router.post("/sendgrid")
 async def sendgrid_event_webhook(request: Request, db: Session = Depends(get_db)):
     """Handle SendGrid event webhooks."""
     try:
@@ -270,6 +270,9 @@ async def sendgrid_event_webhook(request: Request, db: Session = Depends(get_db)
         
         event_type = event.get("event")
         local_message_id = event.get("local_message_id")
+        custom_args = event.get("custom_args")
+        if not local_message_id and isinstance(custom_args, dict):
+            local_message_id = custom_args.get("local_message_id") or custom_args.get("message_id")
         sg_message_id = event.get("sg_message_id")
         
         message = None
