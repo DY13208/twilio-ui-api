@@ -212,7 +212,7 @@
   "subject": "Checking in",
   "content": "Hi {{name}}"
 }</pre>
-          <p><code>POST /api/marketing/campaigns/{campaign_id}/steps/batch</code> 批量创建步骤。</p>
+          <p><code>POST /api/marketing/campaigns/{campaign_id}/steps/batch</code> 批量创建/更新步骤（按 order_no 覆盖）。</p>
           <pre>{
   "steps": [
     {"order_no": 1, "channel": "EMAIL", "delay_days": 0},

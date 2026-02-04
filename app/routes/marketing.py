@@ -524,9 +524,50 @@ def create_campaign_steps(
     campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
     if not campaign:
         raise HTTPException(status_code=404, detail="campaign not found")
+    seen_orders = set()
+    duplicate_orders = set()
+    for step_payload in payload.steps:
+        if step_payload.order_no in seen_orders:
+            duplicate_orders.add(step_payload.order_no)
+        else:
+            seen_orders.add(step_payload.order_no)
+    if duplicate_orders:
+        raise HTTPException(status_code=400, detail="duplicate order_no in steps")
+    order_nos = [step_payload.order_no for step_payload in payload.steps]
+    existing_steps = (
+        db.query(CampaignStep)
+        .filter(
+            CampaignStep.campaign_id == campaign_id,
+            CampaignStep.order_no.in_(order_nos),
+        )
+        .all()
+    )
+    steps_by_order: Dict[int, List[CampaignStep]] = {}
+    for step in existing_steps:
+        steps_by_order.setdefault(step.order_no, []).append(step)
+    for steps in steps_by_order.values():
+        steps.sort(key=lambda item: item.id)
     now = datetime.utcnow()
-    steps = [_build_campaign_step(campaign_id, step_payload, now) for step_payload in payload.steps]
-    db.add_all(steps)
+    steps: List[CampaignStep] = []
+    for step_payload in payload.steps:
+        candidates = steps_by_order.get(step_payload.order_no)
+        if candidates:
+            step = candidates.pop(0)
+            step.order_no = step_payload.order_no
+            step.channel = _normalize_step_channel(step_payload.channel)
+            step.delay_days = step_payload.delay_days or 0
+            step.filter_rules = serialize_json_dict(step_payload.filter_rules)
+            step.template_id = step_payload.template_id
+            step.subject = step_payload.subject
+            step.content = step_payload.content
+            step.content_sid = step_payload.content_sid
+            step.content_variables = serialize_json_dict(step_payload.content_variables)
+            step.updated_at = now
+            db.add(step)
+        else:
+            step = _build_campaign_step(campaign_id, step_payload, now)
+            db.add(step)
+        steps.append(step)
     db.commit()
     for step in steps:
         db.refresh(step)

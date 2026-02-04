@@ -273,7 +273,7 @@ export const API_DOCS: ApiSection[] = [
       {
         method: 'POST',
         path: '/api/marketing/campaigns/{campaign_id}/steps/batch',
-        description: '批量创建步骤。',
+        description: '批量创建/更新步骤（按 order_no 覆盖）。',
         payload: {
           steps: [
             { order_no: 1, channel: 'EMAIL', delay_days: 0 },
